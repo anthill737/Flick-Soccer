@@ -194,9 +194,9 @@
     display: inline-flex; align-items: center; justify-content: center;
     font-weight: 800; font-size: 12px; color: #0a0a0a;
   }
-  #intro .match-result.W { background: #ffd84a; }
-  #intro .match-result.L { background: #ff6b6b; color: #fff; }
-  #intro .match-result.D { background: #4ecdc4; }
+  #intro .match-result.W { background: #2ecc71; color: #0a0a0a; }
+  #intro .match-result.L { background: #ff5252; color: #fff; }
+  #intro .match-result.D { background: #7a8999; color: #0a0a0a; }
   #intro .match-score {
     font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px;
     letter-spacing: 1px; white-space: nowrap;
@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.1.2</div>
+  <div id="version-tag">v3.1.3</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1328,13 +1328,13 @@
           if (opp.team === p.team) continue;
           const odx = opp.x - p.x, ody = opp.y - p.y;
           const t = (odx * dx + ody * dy) / (d * d);
-          if (t < 0.1 || t > 0.9) continue;
+          if (t < 0.05 || t > 0.95) continue;
           const projX = p.x + dx * t, projY = p.y + dy * t;
           const laneDist = Math.hypot(opp.x - projX, opp.y - projY);
-          if (laneDist < 30) { laneBlocked = true; break; }
+          if (laneDist < 40) { laneBlocked = true; break; }
         }
 
-        const minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 40 : 60;
+        const minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 50 : 75;
         if (!laneBlocked && targetOpen >= minOpen) {
           const leadX = bestMate.vx * 8;
           const leadY = bestMate.vy * 8;
@@ -1895,15 +1895,26 @@
       const clamped = Math.min(mag, 60);
       const nx = mag > 0 ? dx/mag : 0;
       const ny = mag > 0 ? dy/mag : 0;
-      // Sprint ring (appears when pushed hard)
-      if (mag > 60 * 0.97) {
+      const sprintThresholdR = 60 * 0.97;
+      const isSprinting = mag > sprintThresholdR;
+      // Sprint threshold ring — always visible so the player can FEEL
+      // the boundary between run and sprint. Dashed; brighter when crossed.
+      ctx.strokeStyle = isSprinting ? 'rgba(255, 216, 74, 0.85)' : 'rgba(255, 216, 74, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(input.joyStartX, input.joyStartY, sprintThresholdR, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Sprint glow (bolder ring when actively sprinting)
+      if (isSprinting) {
         ctx.strokeStyle = 'rgba(255, 216, 74, 0.7)';
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(input.joyStartX, input.joyStartY, 66, 0, Math.PI*2);
         ctx.stroke();
       }
-      ctx.fillStyle = mag > 60 * 0.97 ? 'rgba(255, 216, 74, 0.9)' : 'rgba(255,255,255,0.8)';
+      ctx.fillStyle = isSprinting ? 'rgba(255, 216, 74, 0.9)' : 'rgba(255,255,255,0.8)';
       ctx.beginPath();
       ctx.arc(input.joyStartX + nx * clamped, input.joyStartY + ny * clamped, 22, 0, Math.PI*2);
       ctx.fill();
