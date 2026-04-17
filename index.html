@@ -84,45 +84,6 @@
     font-family: monospace;
   }
 
-  /* Rotate overlay for portrait mode */
-  #rotate-overlay {
-    position: fixed;
-    inset: 0;
-    background: #1a1a1a;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    z-index: 1000;
-    padding: 40px;
-    text-align: center;
-  }
-  #rotate-overlay.visible { display: flex; }
-  #rotate-overlay .icon {
-    width: 80px;
-    height: 50px;
-    border: 3px solid #e5e5e5;
-    border-radius: 6px;
-    margin-bottom: 20px;
-    position: relative;
-    animation: rotateHint 2s ease-in-out infinite;
-  }
-  #rotate-overlay .icon::after {
-    content: '';
-    position: absolute;
-    top: 50%; left: 50%;
-    width: 6px; height: 6px;
-    background: #e5e5e5;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-  }
-  @keyframes rotateHint {
-    0%, 100% { transform: rotate(0deg); }
-    50% { transform: rotate(-90deg); }
-  }
-  #rotate-overlay h2 { font-size: 20px; font-weight: 500; margin-bottom: 8px; }
-  #rotate-overlay p { font-size: 14px; color: #999; line-height: 1.5; max-width: 300px; }
-
   /* Desktop notice */
   #desktop-notice {
     position: fixed;
@@ -153,15 +114,9 @@
 </head>
 <body>
 
-<div id="rotate-overlay">
-  <div class="icon"></div>
-  <h2>Rotate your phone</h2>
-  <p>This game needs landscape mode — turn your phone sideways to play.</p>
-</div>
-
 <div id="desktop-notice">
   <h2>Mobile version</h2>
-  <p>This is the touch-control version designed for phones in landscape. It works on desktop too — the left half of the field acts as a joystick, the right half is your flick zone.</p>
+  <p>This is a portrait mobile game. On desktop: the left half of the field is the joystick, the right half is your flick zone.</p>
   <button onclick="document.getElementById('desktop-notice').classList.remove('visible')">Play anyway</button>
 </div>
 
@@ -176,7 +131,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V9</div>
+  <div id="version-tag">V10</div>
 </div>
 
 <script>
@@ -184,21 +139,8 @@
   // ============================================================
   // ORIENTATION / DEVICE DETECTION
   // ============================================================
-  const rotateOverlay = document.getElementById('rotate-overlay');
   const desktopNotice = document.getElementById('desktop-notice');
   const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-
-  function checkOrientation() {
-    if (!isTouchDevice) {
-      // On desktop, show notice once, then allow play
-      return;
-    }
-    const portrait = window.innerHeight > window.innerWidth;
-    rotateOverlay.classList.toggle('visible', portrait);
-  }
-  window.addEventListener('resize', checkOrientation);
-  window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 100));
-  checkOrientation();
 
   // Show desktop notice briefly on non-touch
   if (!isTouchDevice) {
@@ -211,26 +153,37 @@
   const canvas = document.getElementById('pitch');
   const ctx = canvas.getContext('2d');
 
-  // Game logical dimensions — we stretch canvas to fill the full viewport
-  // so the user's fingers reach every edge. Aspect is anisotropic.
-  let W = 1100, H = 900;
+  // Portrait field — 9:16 aspect matches mobile soccer games (Mini Football,
+  // Score! Hero, PES Mobile). Canvas fits the viewport preserving aspect —
+  // black bars only appear on very tall or landscape screens.
+  let W = 720, H = 1280;
   let canvasScaleX = 1, canvasScaleY = 1;
 
   function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    const aspect = W / H;
 
-    canvas.style.width = vw + 'px';
-    canvas.style.height = vh + 'px';
-    canvas.style.left = '0px';
-    canvas.style.top = '0px';
+    let displayW, displayH;
+    if (vw / vh > aspect) {
+      displayH = vh;
+      displayW = vh * aspect;
+    } else {
+      displayW = vw;
+      displayH = vw / aspect;
+    }
 
-    canvas.width = vw * dpr;
-    canvas.height = vh * dpr;
+    canvas.style.width = displayW + 'px';
+    canvas.style.height = displayH + 'px';
+    canvas.style.left = ((vw - displayW) / 2) + 'px';
+    canvas.style.top = ((vh - displayH) / 2) + 'px';
 
-    canvasScaleX = vw / W;
-    canvasScaleY = vh / H;
+    canvas.width = displayW * dpr;
+    canvas.height = displayH * dpr;
+
+    canvasScaleX = displayW / W;
+    canvasScaleY = displayH / H;
     ctx.setTransform(canvasScaleX * dpr, 0, 0, canvasScaleY * dpr, 0, 0);
   }
   window.addEventListener('resize', resizeCanvas);
@@ -248,7 +201,7 @@
   // ============================================================
   // PHYSICS / TUNING CONSTANTS
   // ============================================================
-  const GOAL_WIDTH = 220, GOAL_DEPTH = 22;
+  const GOAL_WIDTH = 180, GOAL_DEPTH = 22;
   const PITCH_PAD = 16;
   const goalTopX = W/2 - GOAL_WIDTH/2;
   const goalTopY = 6;
@@ -315,19 +268,19 @@
   function setupPlayers() {
     players = [];
     // HOME (red, attacks up)
-    players.push(createPlayer('home', 'keeper', W/2, H - 30));
-    players.push(createPlayer('home', 'defender', W/2 - 150, H * 0.68));
-    players.push(createPlayer('home', 'defender', W/2 + 150, H * 0.68));
-    const user = createPlayer('home', 'striker', W/2, H * 0.55);
+    players.push(createPlayer('home', 'keeper', W/2, H - 40));
+    players.push(createPlayer('home', 'defender', W/2 - 110, H * 0.72));
+    players.push(createPlayer('home', 'defender', W/2 + 110, H * 0.72));
+    const user = createPlayer('home', 'striker', W/2, H * 0.58);
     user.isUser = true;
     players.push(user);
     userPlayer = user;
 
     // AWAY (blue, attacks down)
-    players.push(createPlayer('away', 'keeper', W/2, 30));
-    players.push(createPlayer('away', 'defender', W/2 - 150, H * 0.32));
-    players.push(createPlayer('away', 'defender', W/2 + 150, H * 0.32));
-    players.push(createPlayer('away', 'striker', W/2, H * 0.45));
+    players.push(createPlayer('away', 'keeper', W/2, 40));
+    players.push(createPlayer('away', 'defender', W/2 - 110, H * 0.28));
+    players.push(createPlayer('away', 'defender', W/2 + 110, H * 0.28));
+    players.push(createPlayer('away', 'striker', W/2, H * 0.42));
   }
 
   const ball = {
@@ -395,8 +348,8 @@
   }
 
   function isLeftSide(gameX) {
-    // Left third is movement, right two-thirds is flick zone + shared
-    return gameX < W * 0.4;
+    // Portrait: left half of screen = joystick (left thumb), right half = flick (right thumb)
+    return gameX < W * 0.5;
   }
 
   function handleTouchStart(e) {
@@ -743,9 +696,9 @@
       ty = goalCenterY;
       // Rush out if ball is close & in danger zone
       const bdist = Math.hypot(ball.x - p.x, ball.y - p.y);
-      if (bdist < 110 && Math.abs(ball.y - ownGoalY) < 140) {
+      if (bdist < 140 && Math.abs(ball.y - ownGoalY) < 200) {
         tx = ball.x;
-        ty = ball.y + (isHomeTeam ? -12 : 12);
+        ty = ball.y + (isHomeTeam ? -15 : 15);
       }
     } else {
       const ballCarrier = ball.possessedBy;
@@ -753,25 +706,21 @@
       if (ballCarrier && ballCarrier.team === p.team) {
         // TEAMMATE HAS BALL: support play
         if (ballCarrier.isUser) {
-          // User has ball — make supporting runs so user can pass forward
           if (p.role === 'defender') {
-            // Defenders hold line slightly behind ball
             tx = p.homeX;
             ty = isHomeTeam
-              ? Math.min(H * 0.75, ball.y + 40)
-              : Math.max(H * 0.25, ball.y - 40);
+              ? Math.min(H * 0.78, ball.y + 60)
+              : Math.max(H * 0.22, ball.y - 60);
           } else {
             // Striker/mid: run into space ahead of user toward goal
-            // Spread left/right using home side as hint
-            const laneOffset = (p.homeX < W/2 ? -1 : 1) * 140;
-            tx = W/2 + laneOffset + Math.sin(performance.now() / 1200 + p.homeX) * 30;
-            ty = isHomeTeam ? ball.y - 160 : ball.y + 160;
+            const laneOffset = (p.homeX < W/2 ? -1 : 1) * 120;
+            tx = W/2 + laneOffset + Math.sin(performance.now() / 1200 + p.homeX) * 25;
+            ty = isHomeTeam ? ball.y - 240 : ball.y + 240;
           }
         } else {
-          // AI teammate has ball
           if (p.role === 'striker' || p.role === 'mid') {
             tx = ball.x + (Math.random() - 0.5) * 40;
-            ty = isHomeTeam ? ball.y - 110 : ball.y + 110;
+            ty = isHomeTeam ? ball.y - 160 : ball.y + 160;
           } else {
             tx = p.homeX;
             ty = p.homeY;
@@ -901,7 +850,7 @@
     }
 
     // Enemy (away) shoots more aggressively from farther; home AI slightly more eager too
-    const shootRange = isHomeTeam ? 230 : 300;
+    const shootRange = isHomeTeam ? 300 : 400;
     const shootProb = isHomeTeam ? 0.028 : 0.042;
     if (distToGoal < shootRange && Math.random() < shootProb) {
       const tx = goalX + (Math.random() - 0.5) * (GOAL_WIDTH - 20);
@@ -1197,14 +1146,14 @@
     // Halfway line
     ctx.beginPath(); ctx.moveTo(PITCH_PAD, H/2); ctx.lineTo(W - PITCH_PAD, H/2); ctx.stroke();
     // Center circle
-    ctx.beginPath(); ctx.arc(W/2, H/2, 70, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2, H/2, 85, 0, Math.PI*2); ctx.stroke();
     ctx.beginPath(); ctx.arc(W/2, H/2, 3, 0, Math.PI*2);
     ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
-    // Penalty boxes (top & bottom)
-    ctx.strokeRect(W/2 - 200, PITCH_PAD, 400, 110);
-    ctx.strokeRect(W/2 - 200, H - PITCH_PAD - 110, 400, 110);
-    ctx.strokeRect(W/2 - 115, PITCH_PAD, 230, 48);
-    ctx.strokeRect(W/2 - 115, H - PITCH_PAD - 48, 230, 48);
+    // Penalty boxes (top & bottom) — sized to narrower portrait field
+    ctx.strokeRect(W/2 - 160, PITCH_PAD, 320, 130);
+    ctx.strokeRect(W/2 - 160, H - PITCH_PAD - 130, 320, 130);
+    ctx.strokeRect(W/2 - 90, PITCH_PAD, 180, 56);
+    ctx.strokeRect(W/2 - 90, H - PITCH_PAD - 56, 180, 56);
     // Goals
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fillRect(goalTopX, goalTopY, GOAL_WIDTH, GOAL_DEPTH);
@@ -1352,10 +1301,10 @@
     // Hint (only when nothing is happening & touch device)
     if (isTouchDevice && !input.joyActive && input.flickState === 'idle') {
       ctx.fillStyle = 'rgba(255,255,255,0.15)';
-      ctx.font = 'bold 14px sans-serif';
+      ctx.font = 'bold 16px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('DRAG TO MOVE', W * 0.2, H * 0.5);
-      ctx.fillText('PULL + FLICK', W * 0.75, H * 0.5);
+      ctx.fillText('DRAG', W * 0.25, H * 0.88);
+      ctx.fillText('FLICK', W * 0.75, H * 0.88);
     }
 
     // Stamina bar — drawn as ring around user player
