@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.3.1</div>
+  <div id="version-tag">v3.3.2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -879,10 +879,16 @@
     ball.y = userPlayer.y + dirY * (userPlayer.r + ball.r + 2);
 
     if (lobMode) {
-      const hPower = power * LOB_LAUNCH_MULT;
+      // Lob gets its own beefier power curve and a floor so even a soft
+      // flick lofts the ball a respectable distance. Horizontal mult > 1
+      // so lobs can outrun on-the-ground shot range; vertical slightly
+      // boosted for hang time.
+      const lobBase = Math.max(power, 4.2);
+      const hPower = lobBase * 1.28;
+      const vPower = lobBase * 1.12;
       ball.vx = dirX * hPower;
       ball.vy = dirY * hPower;
-      ball.vz = power;
+      ball.vz = vPower;
       ball.z = 0;
       ball.spin = spin * 0.5;
     } else {
@@ -1668,14 +1674,20 @@
       }
     }
 
-    // Top/bottom walls (outside goal mouth) - sidelines
+    // Top/bottom walls (sidelines + end-line).
+    // The ball may pass through the goal mouth ONLY if it's a live, on-
+    // the-ground shot (z < 22 and not shot-dead). Otherwise the back-
+    // of-net / crossbar-line bounces it back so the ball can't escape
+    // off the top or bottom of the pitch.
     if (ball.y < ball.r + PITCH_PAD) {
       const inGoalMouth = ball.x > goalTopX && ball.x < goalTopX + GOAL_WIDTH;
-      if (!inGoalMouth) { ball.y = ball.r + PITCH_PAD; ball.vy *= -0.4; }
+      const canPassGoal = inGoalMouth && ball.z < 22 && !ball._shotDead;
+      if (!canPassGoal) { ball.y = ball.r + PITCH_PAD; ball.vy *= -0.4; }
     }
     if (ball.y > H - ball.r - PITCH_PAD) {
       const inGoalMouth = ball.x > goalBotX && ball.x < goalBotX + GOAL_WIDTH;
-      if (!inGoalMouth) { ball.y = H - ball.r - PITCH_PAD; ball.vy *= -0.4; }
+      const canPassGoal = inGoalMouth && ball.z < 22 && !ball._shotDead;
+      if (!canPassGoal) { ball.y = H - ball.r - PITCH_PAD; ball.vy *= -0.4; }
     }
 
     // Ball-player collisions (pickup or deflect)
