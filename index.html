@@ -245,10 +245,10 @@
   const goalBotX = W/2 - GOAL_WIDTH/2;
   const goalBotY = H - 6 - GOAL_DEPTH;
 
-  const PLAYER_WALK_MAX = 0.82;
-  const PLAYER_SPRINT_MAX = 1.32;
-  const PLAYER_ACCEL = 0.075;
-  const PLAYER_DECEL = 0.07;
+  const PLAYER_WALK_MAX = 1.23;
+  const PLAYER_SPRINT_MAX = 1.98;
+  const PLAYER_ACCEL = 0.11;
+  const PLAYER_DECEL = 0.10;
 
   const STAMINA_MAX = 100;
   const STAMINA_DRAIN = 0.32;
@@ -256,10 +256,10 @@
   const STAMINA_MIN_TO_SPRINT = 8;
 
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
-  const MAX_BALL_PX_PER_FRAME = 3.9;
-  const MIN_SHOT_SPEED = 0.72;
-  const POWER_SCALE = 0.0017;
-  const POWER_BASELINE = 0.85;
+  const MAX_BALL_PX_PER_FRAME = 5.85;
+  const MIN_SHOT_SPEED = 1.08;
+  const POWER_SCALE = 0.00255;
+  const POWER_BASELINE = 1.28;
   const LINEAR_DRAG = 0.009;
   const QUAD_DRAG = 0.0025;
 
@@ -267,7 +267,7 @@
   const MAGNUS_COEFF = 0.022;
   const SPIN_DECAY = 0.982;
 
-  const GRAVITY = 0.16;
+  const GRAVITY = 0.24;
   const LOB_LAUNCH_MULT = 0.7;
 
   const DRIBBLE_OFFSET = 20;
@@ -776,8 +776,8 @@
       tvy = (dy / d) * speedLimit;
     }
 
-    p.vx += (tvx - p.vx) * 0.08;
-    p.vy += (tvy - p.vy) * 0.08;
+    p.vx += (tvx - p.vx) * 0.12;
+    p.vy += (tvy - p.vy) * 0.12;
     p.x += p.vx;
     p.y += p.vy;
 
@@ -815,7 +815,7 @@
       const ty = goalY;
       const dx = tx - p.x, dy = ty - p.y;
       const d = Math.hypot(dx, dy);
-      const power = 2.8 + Math.random() * 0.7;
+      const power = 4.2 + Math.random() * 1.05;
       ball.possessedBy = null;
       ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
       ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
@@ -844,7 +844,7 @@
       if (bestMate) {
         const dx = bestMate.x - p.x, dy = bestMate.y - p.y;
         const d = Math.hypot(dx, dy);
-        const power = Math.min(2.8, 1.2 + d * 0.006);
+        const power = Math.min(4.2, 1.8 + d * 0.009);
         ball.possessedBy = null;
         ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
         ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
@@ -992,7 +992,7 @@
         }
         // Other players: pick up if ball slow, deflect if fast
         const ballSpeed = Math.hypot(ball.vx, ball.vy);
-        if (ballSpeed < 2.2 && flickResolved) {
+        if (ballSpeed < 3.3 && flickResolved) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
           if (p === userPlayer) flickResolved = true;
