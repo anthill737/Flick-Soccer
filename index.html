@@ -129,32 +129,34 @@
     font-size: 30px;
     font-weight: 900;
     letter-spacing: 2px;
-    color: #ffd84a;
+    color: #ffffff;
     text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
     margin-bottom: 4px;
     text-align: center;
   }
   #intro .tagline { font-size: 12px; color: #aaa; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 20px; }
-  #intro .controls { width: 100%; max-width: 340px; margin-bottom: 20px; }
+  #intro .controls { width: 100%; max-width: 380px; margin-bottom: 20px; }
   #intro .controls h3 { font-size: 12px; color: #888; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
   #intro .control-row {
     display: flex;
     align-items: flex-start;
-    padding: 6px 0;
+    padding: 8px 0;
     font-size: 13px;
     line-height: 1.4;
     border-bottom: 1px solid rgba(255,255,255,0.06);
   }
   #intro .control-row:last-child { border-bottom: none; }
   #intro .control-row .icon {
-    flex: 0 0 60px;
+    flex: 0 0 96px;
     color: #ffd84a;
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10.5px;
     letter-spacing: 0.5px;
     padding-top: 2px;
+    padding-right: 8px;
+    white-space: nowrap;
   }
-  #intro .control-row .desc { flex: 1; color: #ccc; }
+  #intro .control-row .desc { flex: 1; color: #ccc; min-width: 0; }
   #intro .buttons { display: flex; gap: 10px; margin-top: 6px; }
   #intro button {
     border: none;
@@ -282,7 +284,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">V28</div>
+  <div id="version-tag">V29</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -989,14 +991,50 @@
       p._engaging = engageBall;
 
       if (ourPossession) {
-        // OFFENSE: hold position based on SMOOTHED ball
+        // OFFENSE: teammates move like actual soccer players.
+        // The defender on the same side as the ball makes OVERLAPPING
+        // runs up the wing when the ball is in the opposing half.
+        // The other defender holds the back line for cover.
+        // Strikers make timed penetrating runs, cycling lanes so the
+        // attack isn't a static 'one up top' shape.
+        const ballInOppHalf = isHomeTeam ? smoothedBall.y < H * 0.5 : smoothedBall.y > H * 0.5;
+        const ballSide = smoothedBall.x < W/2 ? -1 : 1;
+        const mySide = p.homeX < W/2 ? -1 : 1;
+
         if (p.role === 'defender') {
-          tx = p.homeX;
-          ty = smoothedBall.y - forward * 110;
-          ty = isHomeTeam ? Math.max(H * 0.52, ty) : Math.min(H * 0.48, ty);
+          const shouldOverlap = ballInOppHalf && mySide === ballSide;
+          if (shouldOverlap) {
+            // Push up the flank — arrive near the ball to offer an outlet
+            tx = W/2 + mySide * 170;
+            ty = smoothedBall.y + forward * 30;
+            // Don't cross the opponent penalty box line
+            ty = isHomeTeam ? Math.max(130, ty) : Math.min(H - 130, ty);
+          } else {
+            // Cover: hold the back line while the other defender overlaps
+            tx = p.homeX * 0.8 + smoothedBall.x * 0.2;
+            ty = smoothedBall.y - forward * 130;
+            ty = isHomeTeam ? Math.max(H * 0.55, ty) : Math.min(H * 0.45, ty);
+          }
         } else {
-          tx = W/2 + laneSide * 130 + Math.sin(performance.now() / 1400 + p.homeX) * 30;
-          ty = smoothedBall.y + forward * 180;
+          // Striker run patterns on a slow cycle (~8s), per-player phase
+          const phase = (performance.now() / 1000 + p.homeX * 0.003) % 8;
+          let runLaneOffset = laneSide * 130;
+          let runAhead = 180;
+          if (phase < 2.5) {
+            // Hold — stay wide, slightly back, looking for through ball
+            runLaneOffset = laneSide * 160;
+            runAhead = 140;
+          } else if (phase < 5) {
+            // PENETRATE — sprint diagonally toward the center channel
+            runLaneOffset = laneSide * 50;
+            runAhead = 240;
+          } else {
+            // DRIFT WIDE — pull the defender out, create space for a teammate
+            runLaneOffset = laneSide * 200;
+            runAhead = 170;
+          }
+          tx = W/2 + runLaneOffset + Math.sin(performance.now() / 1400 + p.homeX) * 20;
+          ty = smoothedBall.y + forward * runAhead;
           const offsideY = isHomeTeam ? 95 : H - 95;
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
