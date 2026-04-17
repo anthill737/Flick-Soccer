@@ -170,6 +170,52 @@
   #intro .btn-start { background: #4ecdc4; color: #0a0a0a; }
   #intro .btn-stats { background: rgba(255,255,255,0.12); color: #e5e5e5; border: 1px solid rgba(255,255,255,0.2); }
 
+  /* Stats history screen — card layout with clear hierarchy */
+  #intro .stats-title {
+    font-size: 16px; font-weight: 800; letter-spacing: 2px;
+    color: #e5e5e5; margin: 4px 0 14px; text-align: center;
+    text-transform: uppercase;
+  }
+  #intro .stats-empty { color: #777; font-style: italic; margin: 18px 0; text-align: center; }
+  #intro .stats-list { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 10px; }
+  #intro .match-card {
+    background: rgba(255,255,255,0.035);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  #intro .match-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; margin-bottom: 8px;
+  }
+  #intro .match-date { color: #8a8a8a; font-size: 11px; letter-spacing: 0.5px; }
+  #intro .match-result {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 12px; color: #0a0a0a;
+  }
+  #intro .match-result.W { background: #ffd84a; }
+  #intro .match-result.L { background: #ff6b6b; color: #fff; }
+  #intro .match-result.D { background: #4ecdc4; }
+  #intro .match-score {
+    font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px;
+    letter-spacing: 1px; white-space: nowrap;
+  }
+  #intro .match-score .home { color: #ff4757; }
+  #intro .match-score .dash { color: #555; margin: 0 6px; }
+  #intro .match-score .away { color: #5a8be8; }
+  #intro .match-stats {
+    display: grid;
+    grid-template-columns: auto 1fr auto 1fr auto;
+    gap: 2px 10px;
+    font-size: 12px;
+    align-items: center;
+  }
+  #intro .match-stats .k { color: #777; font-size: 10.5px; letter-spacing: 0.5px; text-transform: uppercase; }
+  #intro .match-stats .v-h { color: #ff4757; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  #intro .match-stats .v-d { color: #444; }
+  #intro .match-stats .v-a { color: #5a8be8; font-weight: 700; text-align: left; font-variant-numeric: tabular-nums; }
+
   #endscreen {
     position: fixed;
     inset: 0;
@@ -284,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.1.1</div>
+  <div id="version-tag">v3.1.2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -2098,36 +2144,52 @@
 
   function showStatsView() {
     const history = loadHistory();
-    let html = `
-      <h1 style="font-size:22px;color:#e5e5e5;margin-bottom:18px">STATS HISTORY</h1>
-    `;
+    let html = `<div class="stats-title">Stats History</div>`;
     if (history.length === 0) {
-      html += `<div style="color:#777;font-style:italic;margin-bottom:18px">No past matches yet.</div>`;
+      html += `<div class="stats-empty">No past matches yet.</div>`;
     } else {
-      html += `<div class="controls" style="max-width:340px">`;
+      html += `<div class="stats-list">`;
       for (const r of history) {
         const d = new Date(r.ts);
-        const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+        const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' +
                      d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         const total = r.home.possessionFrames + r.away.possessionFrames;
         const hp = total ? Math.round(r.home.possessionFrames / total * 100) : 50;
         const ap = 100 - hp;
         const result = r.scoreHome > r.scoreAway ? 'W' : r.scoreHome < r.scoreAway ? 'L' : 'D';
-        const rc = result === 'W' ? '#ffd84a' : result === 'L' ? '#ff6b6b' : '#4ecdc4';
         html += `
-          <div class="control-row" style="flex-direction:column;align-items:stretch;padding:10px 0">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <span style="color:#888;font-size:12px">${when}</span>
-              <span style="font-weight:800;color:${rc}">${result}</span>
-              <span style="font-variant-numeric:tabular-nums;font-weight:700;font-size:15px">
-                <span style="color:#e63946">${r.scoreHome}</span>&nbsp;–&nbsp;<span style="color:#5a8be8">${r.scoreAway}</span>
+          <div class="match-card">
+            <div class="match-head">
+              <span class="match-date">${when}</span>
+              <span class="match-result ${result}">${result}</span>
+              <span class="match-score">
+                <span class="home">${r.scoreHome}</span><span class="dash">–</span><span class="away">${r.scoreAway}</span>
               </span>
             </div>
-            <div style="font-size:11px;color:#aaa;display:flex;gap:10px;flex-wrap:wrap">
-              <span>Shots <b>${r.home.shots}</b>–<b>${r.away.shots}</b></span>
-              <span>SoG <b>${r.home.shotsOnGoal}</b>–<b>${r.away.shotsOnGoal}</b></span>
-              <span>Tackles <b>${r.home.tackles}</b>–<b>${r.away.tackles}</b></span>
-              <span>Poss <b>${hp}%</b>–<b>${ap}%</b></span>
+            <div class="match-stats">
+              <span class="k">Shots</span>
+              <span class="v-h">${r.home.shots}</span>
+              <span class="v-d">–</span>
+              <span class="v-a">${r.away.shots}</span>
+              <span class="k" style="text-align:right">&nbsp;</span>
+
+              <span class="k">SoG</span>
+              <span class="v-h">${r.home.shotsOnGoal}</span>
+              <span class="v-d">–</span>
+              <span class="v-a">${r.away.shotsOnGoal}</span>
+              <span class="k" style="text-align:right">&nbsp;</span>
+
+              <span class="k">Tackles</span>
+              <span class="v-h">${r.home.tackles}</span>
+              <span class="v-d">–</span>
+              <span class="v-a">${r.away.tackles}</span>
+              <span class="k" style="text-align:right">&nbsp;</span>
+
+              <span class="k">Possession</span>
+              <span class="v-h">${hp}%</span>
+              <span class="v-d">–</span>
+              <span class="v-a">${ap}%</span>
+              <span class="k" style="text-align:right">&nbsp;</span>
             </div>
           </div>
         `;
@@ -2135,7 +2197,7 @@
       html += `</div>`;
     }
     html += `
-      <div class="buttons" style="margin-top:14px">
+      <div class="buttons" style="margin-top:18px">
         <button class="btn-stats" id="statsBack">BACK</button>
       </div>
     `;
