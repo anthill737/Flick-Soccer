@@ -142,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V15</div>
+  <div id="version-tag">V16</div>
 </div>
 
 <script>
@@ -171,7 +171,11 @@
   let canvasScaleX = 1, canvasScaleY = 1;
 
   function resizeCanvas() {
-    const dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2 — some mobile browsers silently clip canvases that
+    // exceed an internal max (often around 16M pixels / 4096 per side).
+    // At a native 3x DPR on a tall phone, 1440*3 x 2560*3 = 33M px which
+    // can cause the canvas to render at a fraction of its intended size.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const aspect = W / H;
@@ -200,6 +204,9 @@
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
   resizeCanvas();
+  // Handle Chrome's dynamic URL bar that retracts after first interaction
+  setTimeout(resizeCanvas, 250);
+  setTimeout(resizeCanvas, 1000);
 
   // ============================================================
   // HUD
