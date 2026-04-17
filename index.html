@@ -60,18 +60,18 @@
   }
   #lobToggle {
     position: fixed;
-    right: 14px;
-    bottom: 22%; /* near thumb rest — above the natural flick zone */
-    width: 72px;
-    height: 72px;
+    right: 4px;
+    bottom: 22%;
+    width: 54px;
+    height: 54px;
     padding: 0;
     border-radius: 50%;
-    background: rgba(0,0,0,0.6);
+    background: rgba(0,0,0,0.55);
     color: white;
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 1px;
-    border: 2px solid rgba(255,255,255,0.3);
+    border: 2px solid rgba(255,255,255,0.25);
     pointer-events: auto;
     z-index: 20;
     display: flex;
@@ -82,13 +82,13 @@
   #lobToggle::before {
     content: '';
     position: absolute;
-    inset: -20px;
+    inset: -22px;
   }
   #lobToggle.on {
     background: #ffd84a;
     color: #4a3800;
     border-color: #ffd84a;
-    box-shadow: 0 0 18px rgba(255,216,74,0.7);
+    box-shadow: 0 0 16px rgba(255,216,74,0.7);
   }
   /* Countdown overlay */
   #countdown {
@@ -282,7 +282,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">V27</div>
+  <div id="version-tag">V28</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -876,7 +876,10 @@
       userPlayer.isSprinting = false;
     }
 
-    const maxSpeed = userPlayer.isSprinting ? PLAYER_SPRINT_MAX : PLAYER_WALK_MAX;
+    // Sluggish state: just got tackled — player stutter-steps for a bit
+    if (userPlayer._sluggish && userPlayer._sluggish > 0) userPlayer._sluggish--;
+    const sluggishMult = (userPlayer._sluggish && userPlayer._sluggish > 0) ? 0.55 : 1.0;
+    const maxSpeed = (userPlayer.isSprinting ? PLAYER_SPRINT_MAX : PLAYER_WALK_MAX) * sluggishMult;
 
     let tvx = 0, tvy = 0;
     if (moving) {
@@ -1079,6 +1082,12 @@
       p.isSprinting = false;
     }
 
+    // Sluggish state after being tackled — reduced top speed for a beat
+    if (p._sluggish && p._sluggish > 0) {
+      p._sluggish--;
+      speedLimit *= 0.55;
+    }
+
     // Dead zone — don't jitter around the target. Tight when chasing ball,
     // wide when holding a position so players visibly "stand" in their zone.
     const deadZone = p._engaging ? 6 : 32;
@@ -1278,6 +1287,7 @@
         carrier.vx = bumpX * 3.6;
         carrier.vy = bumpY * 3.6;
         carrier.stunned = 28;
+        carrier._sluggish = 40; // after stun ends, move at reduced speed for 40 more frames
 
         // Small forward nudge on the tackler for weight
         p.vx += -bumpX * 0.8;
@@ -1398,6 +1408,22 @@
     if (ball.x < ball.r + PITCH_PAD) { ball.x = ball.r + PITCH_PAD; ball.vx *= -0.4; ball.spin *= -0.4; }
     if (ball.x > W - ball.r - PITCH_PAD) { ball.x = W - ball.r - PITCH_PAD; ball.vx *= -0.4; ball.spin *= -0.4; }
 
+    // Broad shot-on-goal detection: if a shot enters the goal mouth box
+    // (within goal-x range AND within shallow goal-line y strip), count
+    // once and clear the flag. Covers saves, posts, and shots that just
+    // squeak past defenders on target.
+    if (ball._isShot && ball._lastKicker && flickResolved === false) {
+      const shooterTeam = ball._lastKicker.team;
+      const inGoalX = ball.x > goalTopX && ball.x < goalTopX + GOAL_WIDTH;
+      const pastTop = ball.y < goalTopY + GOAL_DEPTH + 6;
+      const pastBot = ball.y > goalBotY - 6;
+      const onTarget = (shooterTeam === 'home' && pastTop) || (shooterTeam === 'away' && pastBot);
+      if (inGoalX && onTarget) {
+        stats[shooterTeam].shotsOnGoal++;
+        ball._isShot = false;
+      }
+    }
+
     // Goal detection (both goals)
     if (!flickResolved) {
       // Top goal (away)
@@ -1405,8 +1431,10 @@
         if (ball.y < goalTopY + GOAL_DEPTH - 2) {
           scoreHome++;
           stats.home.goals++;
+          // If broad detection above didn't already count this shot, count now
           if (ball._isShot && ball._lastKicker && ball._lastKicker.team === 'home') {
             stats.home.shotsOnGoal++;
+            ball._isShot = false;
           }
           lastScorer = 'home';
           scoreHomeEl.textContent = scoreHome;
@@ -1425,6 +1453,7 @@
           stats.away.goals++;
           if (ball._isShot && ball._lastKicker && ball._lastKicker.team === 'away') {
             stats.away.shotsOnGoal++;
+            ball._isShot = false;
           }
           lastScorer = 'away';
           scoreAwayEl.textContent = scoreAway;
@@ -1894,12 +1923,13 @@
       <div class="section-title">Recent matches</div>
       <div class="history">${histHtml}</div>
 
-      <button id="playAgainBtn">PLAY AGAIN</button>
+      <button id="playAgainBtn">CONTINUE</button>
     `;
     endscreenEl.classList.add('visible');
     const btn = document.getElementById('playAgainBtn');
-    btn.addEventListener('click', resetForNewMatch);
-    btn.addEventListener('touchstart', e => { e.preventDefault(); resetForNewMatch(); }, { passive: false });
+    const handler = (e) => { if (e) e.preventDefault(); returnToIntro(); };
+    btn.addEventListener('click', handler);
+    btn.addEventListener('touchstart', handler, { passive: false });
   }
 
   function resetForNewMatch() {
@@ -1914,6 +1944,22 @@
     startCountdown();
   }
 
+  // After a match ends the user goes BACK to the intro menu (not
+  // straight into another match). From there they can start again.
+  function returnToIntro() {
+    scoreHome = 0; scoreAway = 0;
+    lastScorer = null;
+    scoreHomeEl.textContent = 0;
+    scoreAwayEl.textContent = 0;
+    stats = { home: emptyTeamStats(), away: emptyTeamStats() };
+    matchStartTime = null;
+    window._matchEnded = false;
+    timerEl.textContent = '02:00';
+    endscreenEl.classList.remove('visible');
+    kickoff();
+    showIntro();
+  }
+
   // ============================================================
   // INTRO / STATS VIEW
   // ============================================================
@@ -1922,8 +1968,8 @@
     const history = loadHistory();
     const historyCount = history.length;
     introEl.innerHTML = `
-      <h1>FLICK FOOT</h1>
-      <div class="tagline">4v4 mobile soccer</div>
+      <h1>FLICK SOCCER</h1>
+      <div class="tagline">4v4 mobile arcade soccer</div>
 
       <div class="controls">
         <h3>Controls</h3>
