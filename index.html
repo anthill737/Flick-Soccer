@@ -222,7 +222,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">V25</div>
+  <div id="version-tag">V26</div>
 </div>
 <div id="endscreen"></div>
 
@@ -401,7 +401,8 @@
   let gameState = 'countdown'; // 'countdown' | 'playing' | 'goalPause' | 'ended'
   let countdownFrames = 0;
   const COUNTDOWN_DURATION = 180; // 3 seconds at 60Hz
-  let hitstopFrames = 0; // short freeze after tackles for impact feel
+  let hitstopFrames = 0; // slow-mo duration after tackles for impact feel
+  let hitstopAltFrame = false; // toggles each step during hitstop — skip=50% speed
 
   // Per-match stats
   function emptyTeamStats() {
@@ -856,6 +857,9 @@
   // AI (teammates + opponents)
   // ============================================================
   function updateAI(p) {
+    if (p._tackleCooldown && p._tackleCooldown > 0) p._tackleCooldown--;
+    if (p._recentlyGained && p._recentlyGained > 0) p._recentlyGained--;
+
     if (p.isUser) return;
     if (p.stunned > 0) {
       // Still apply velocity/drag while stunned so a tackle bump actually
@@ -971,9 +975,9 @@
       if (other.team !== p.team) continue;
       const dx = p.x - other.x, dy = p.y - other.y;
       const d = Math.hypot(dx, dy);
-      if (d < 68 && d > 0.01) {
-        sepX += (dx / d) * (68 - d) * 0.1;
-        sepY += (dy / d) * (68 - d) * 0.1;
+      if (d < 82 && d > 0.01) {
+        sepX += (dx / d) * (82 - d) * 0.12;
+        sepY += (dy / d) * (82 - d) * 0.12;
       }
     }
 
@@ -1105,8 +1109,11 @@
       return;
     }
 
-    // Pass decision — score candidates by forward progress + openness
-    if (Math.random() < 0.055) {
+    // Pass decision — score candidates by forward progress + openness.
+    // Hot-potato: if this AI just won the ball, they pass away much more
+    // eagerly (prevents repeated tackle-pong between teams).
+    const passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.18 : 0.055;
+    if (Math.random() < passProb) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
@@ -1184,6 +1191,7 @@
       if (p === carrier) continue;
       if (p.team === carrier.team) continue; // only opposing players tackle
       if (p.stunned > 0) continue;
+      if (p._tackleCooldown && p._tackleCooldown > 0) continue;
 
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
@@ -1221,9 +1229,16 @@
         // Long immunity so the stunned carrier can't tackle straight back
         p._tackleImmune = 40;
         p._kickCooldown = 0;
+        // The tackler can't tackle again for ~0.7s — prevents
+        // immediate re-tackle if they've already won the ball
+        p._tackleCooldown = 45;
+        // "Hot potato" — after winning the ball, this player is biased
+        // toward passing quickly instead of dribbling into more pressure
+        p._recentlyGained = 90;
 
         stats[p.team].tackles++;
-        hitstopFrames = 6; // ~0.1s freeze — "coyote-time" impact punch
+        hitstopFrames = 18; // ~0.3s of 50% speed slow-mo (feels smooth, not frozen)
+        hitstopAltFrame = false;
 
         if (carrier.isUser || p.isUser) {
           flashText(carrier.isUser ? 'TACKLED!' : 'TACKLE!', '#ff9f40');
@@ -1852,12 +1867,17 @@
     // playing
     updateTimer();
 
-    // Hitstop — brief freeze right after a tackle, so the impact reads
+    // Slow-motion — instead of freezing, run physics at 50% speed for a
+    // handful of frames after a tackle. Implemented by skipping every
+    // other step during hitstop — smoother than a hard freeze.
     if (hitstopFrames > 0) {
       hitstopFrames--;
-      updateParticles();
-      if (flashMsg) { flashMsg.t++; if (flashMsg.t > 55) flashMsg = null; }
-      return;
+      hitstopAltFrame = !hitstopAltFrame;
+      if (hitstopAltFrame) {
+        updateParticles();
+        if (flashMsg) { flashMsg.t++; if (flashMsg.t > 55) flashMsg = null; }
+        return;
+      }
     }
 
     smoothedBall.x += (ball.x - smoothedBall.x) * BALL_SMOOTH;
