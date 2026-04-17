@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.4.4</div>
+  <div id="version-tag">v3.4.5</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1312,6 +1312,42 @@
       }
     }
 
+    // GENERAL EMERGENCY PUNT: any AI that's held the ball > 2 seconds
+    // without a clean pass/shot opportunity releases it upfield. Keeps
+    // play flowing when pressing conditions prevent normal decisions.
+    if (p._possessionTime > 120) {
+      let best = null, bestFwd = -Infinity;
+      for (const mate of players) {
+        if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
+        const fwd = isHomeTeam ? (p.y - mate.y) : (mate.y - p.y);
+        if (fwd > bestFwd) { bestFwd = fwd; best = mate; }
+      }
+      if (best) {
+        const dx = best.x - p.x, dy = best.y - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const power = 6.5;
+        ball.possessedBy = null;
+        ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
+        ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
+        ball.vx = (dx/d) * power * 0.95;
+        ball.vy = (dy/d) * power * 0.95;
+        ball.vz = power * 0.45; // airborne — clears defenders
+        ball.z = 0;
+        ball.spin = 0;
+        p._kickCooldown = 60;
+        p._possessionTime = 0;
+        ball._lastKicker = p;
+        ball._kickCooldown = 30;
+        ball._isShot = false;
+        ball._shotDead = false;
+        stats[p.team].passes++;
+        flickResolved = false;
+        p.kickAnimT = 0; p.kickAnimDur = 14;
+        p.kickAnimDir = { x: dx/d, y: dy/d };
+        return;
+      }
+    }
+
     // Symmetric shot rules — both teams use the same range and base
     // probability so opponents play with the same urgency as teammates.
     const shootRange = 270;
@@ -1355,6 +1391,10 @@
     // get pinned deep in their own box.
     let passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
     if (p.role === 'keeper') passProb = 0.35;
+    // Scale pass probability with how long we've held the ball —
+    // the longer we're holding, the more eagerly we look to move it
+    const holdBoost = Math.min(0.15, p._possessionTime * 0.0015);
+    passProb += holdBoost;
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
     const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.68) : (p.y < H * 0.32);
@@ -1446,6 +1486,8 @@
         let minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 50 : 75;
         if (carrierInOwnThird) minOpen = 45;
         if (p.role === 'keeper') minOpen = 40;
+        // Loosen openness requirement as we've held the ball longer
+        minOpen = Math.max(20, minOpen - p._possessionTime * 0.35);
         if (!laneBlocked && targetOpen >= minOpen) {
           const leadX = bestMate.vx * 8;
           const leadY = bestMate.vy * 8;
