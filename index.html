@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.4.0</div>
+  <div id="version-tag">v3.4.1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1006,6 +1006,10 @@
   function updateAI(p) {
     if (p._tackleCooldown && p._tackleCooldown > 0) p._tackleCooldown--;
     if (p._recentlyGained && p._recentlyGained > 0) p._recentlyGained--;
+    // Decrement kick cooldown every frame (was only decrementing while
+    // player had the ball, which left keepers permanently stuck on
+    // cooldown after a single pass).
+    if (p._kickCooldown && p._kickCooldown > 0) p._kickCooldown--;
 
     if (p.isUser) return;
     if (p.stunned > 0) {
@@ -1251,12 +1255,48 @@
   function aiKick(p) {
     if (!p._kickCooldown) p._kickCooldown = 0;
     p._possessionTime = (p._possessionTime || 0) + 1;
-    if (p._kickCooldown > 0) { p._kickCooldown--; return; }
+    if (p._kickCooldown > 0) return;
 
     const isHomeTeam = p.team === 'home';
     const goalX = W/2;
     const goalY = isHomeTeam ? goalTopY : goalBotY + GOAL_DEPTH;
     const distToGoal = Math.hypot(goalX - p.x, goalY - p.y);
+
+    // KEEPER EMERGENCY PUNT: if the keeper has held the ball for ~0.7s
+    // without a clean pass opportunity, hoof it upfield (airborne) to
+    // the most-forward teammate. Prevents the keeper-stuck glitch.
+    if (p.role === 'keeper' && p._possessionTime > 42) {
+      let best = null, bestFwd = -Infinity;
+      for (const mate of players) {
+        if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
+        const fwd = isHomeTeam ? (p.y - mate.y) : (mate.y - p.y);
+        if (fwd > bestFwd) { bestFwd = fwd; best = mate; }
+      }
+      if (best) {
+        const dx = best.x - p.x, dy = best.y - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const power = 7.5;
+        ball.possessedBy = null;
+        ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
+        ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
+        ball.vx = (dx/d) * power * 0.95;
+        ball.vy = (dy/d) * power * 0.95;
+        ball.vz = power * 0.55; // AIRBORNE — punt clears ground defenders
+        ball.z = 0;
+        ball.spin = 0;
+        p._kickCooldown = 70;
+        p._possessionTime = 0;
+        ball._lastKicker = p;
+        ball._kickCooldown = 30;
+        ball._isShot = false;
+        ball._shotDead = false;
+        stats[p.team].passes++;
+        flickResolved = false;
+        p.kickAnimT = 0; p.kickAnimDur = 14;
+        p.kickAnimDir = { x: dx/d, y: dy/d };
+        return;
+      }
+    }
 
     // FORCED CLEAR: if AI has held ball > 90 frames (~1.5s), boot it forward
     // prevents the ball getting stuck when no good pass/shot exists
@@ -1394,14 +1434,18 @@
         const dx = bestMate.x - p.x, dy = bestMate.y - p.y;
         const d = Math.hypot(dx, dy);
         let laneBlocked = false;
-        for (const opp of players) {
-          if (opp.team === p.team) continue;
-          const odx = opp.x - p.x, ody = opp.y - p.y;
-          const t = (odx * dx + ody * dy) / (d * d);
-          if (t < 0.05 || t > 0.95) continue;
-          const projX = p.x + dx * t, projY = p.y + dy * t;
-          const laneDist = Math.hypot(opp.x - projX, opp.y - projY);
-          if (laneDist < 40) { laneBlocked = true; break; }
+        // Keepers punt airborne — the ball flies over most ground
+        // defenders, so we skip the lane-block check for them
+        if (p.role !== 'keeper') {
+          for (const opp of players) {
+            if (opp.team === p.team) continue;
+            const odx = opp.x - p.x, ody = opp.y - p.y;
+            const t = (odx * dx + ody * dy) / (d * d);
+            if (t < 0.05 || t > 0.95) continue;
+            const projX = p.x + dx * t, projY = p.y + dy * t;
+            const laneDist = Math.hypot(opp.x - projX, opp.y - projY);
+            if (laneDist < 40) { laneBlocked = true; break; }
+          }
         }
 
         // Defensive-third carriers accept slightly less-open teammates —
@@ -1425,7 +1469,9 @@
           ball.y = p.y + (ldy/ld) * (p.r + ball.r + 2);
           ball.vx = (ldx/ld) * power;
           ball.vy = (ldy/ld) * power;
-          ball.vz = 0; ball.z = 0;
+          // Keeper passes go airborne (punt) so they clear defenders
+          ball.vz = p.role === 'keeper' ? power * 0.55 : 0;
+          ball.z = 0;
           ball.spin = 0;
           p._kickCooldown = 60;
           p._possessionTime = 0;
