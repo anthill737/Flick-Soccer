@@ -131,7 +131,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V11</div>
+  <div id="version-tag">V12</div>
 </div>
 
 <script>
@@ -219,14 +219,14 @@
   const STAMINA_MIN_TO_SPRINT = 8;
 
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
-  // Ball — lighter & rollier. Low linear drag so it keeps rolling;
-  // a hard flick can really sail down the pitch.
-  const MAX_BALL_PX_PER_FRAME = 13.5;
-  const MIN_SHOT_SPEED = 2.0;
-  const POWER_SCALE = 0.0056;
-  const POWER_BASELINE = 2.1;
-  const LINEAR_DRAG = 0.004;
-  const QUAD_DRAG = 0.0014;
+  // Ball — has weight but rolls out. Tuned so you can't smoke it the whole
+  // length of the pitch; good shots reach the top third from midfield.
+  const MAX_BALL_PX_PER_FRAME = 10.5;
+  const MIN_SHOT_SPEED = 1.7;
+  const POWER_SCALE = 0.0045;
+  const POWER_BASELINE = 1.85;
+  const LINEAR_DRAG = 0.0085;
+  const QUAD_DRAG = 0.0025;
 
   const MAX_SPIN = 0.26;
   const MAGNUS_COEFF = 0.022;
@@ -296,6 +296,7 @@
   };
 
   let scoreHome = 0, scoreAway = 0;
+  let lastScorer = null; // 'home' | 'away' | null — who scored most recently; other team kicks off
   let matchSeconds = 120;
   let matchStartTime = null;
   let lobMode = false;
@@ -705,56 +706,65 @@
     } else {
       const ballCarrier = ball.possessedBy;
       const ourPossession = ballCarrier && ballCarrier.team === p.team;
-      // Home attacks up (-y), away attacks down (+y)
       const forward = isHomeTeam ? -1 : 1;
-      const laneSide = p.homeX < W/2 ? -1 : 1; // left or right lane based on home
+      const laneSide = p.homeX < W/2 ? -1 : 1;
+      const distToBall = Math.hypot(p.x - ball.x, p.y - ball.y);
 
-      // Base formation position — always computed from ball position so the team
-      // shifts up the pitch as attacks develop instead of bouncing to home spots.
-      if (ourPossession) {
+      // Count teammates closer to the ball than me — used to decide whether
+      // I should go chase the ball (engage) or hold shape.
+      let teammatesCloserToBall = 0;
+      for (const mate of players) {
+        if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
+        const md = Math.hypot(mate.x - ball.x, mate.y - ball.y);
+        if (md < distToBall) teammatesCloserToBall++;
+      }
+
+      // BALL-FIRST override — active participation in play. A teammate will
+      // leave formation to go for the ball when any of these are true:
+      //   - ball is loose and I'm among the 2 closest teammates
+      //   - opponent carries ball and I'm within 200 units (double-team)
+      //   - ball is bouncing slowly nearby (< 130 units) regardless of carrier
+      let engageBall = false;
+      if (!ballCarrier) {
+        if (teammatesCloserToBall <= 1) engageBall = true;
+      } else if (ballCarrier.team !== p.team) {
+        if (distToBall < 200 && teammatesCloserToBall <= 1) engageBall = true;
+      }
+      if (distToBall < 130) engageBall = true;
+
+      if (engageBall) {
+        // Lead the ball slightly — run to where it will be, not where it is
+        tx = ball.x + ball.vx * 6;
+        ty = ball.y + ball.vy * 6;
+      } else if (ourPossession) {
         // OFFENSE: push up pitch in our lane
         if (p.role === 'defender') {
-          // Defender: hold own lane ~110 behind the ball (outlet + defensive cover)
           tx = p.homeX;
           ty = ball.y - forward * 110;
-          // Never cross the halfway line into the opponent half
           ty = isHomeTeam ? Math.max(H * 0.52, ty) : Math.min(H * 0.48, ty);
         } else {
-          // Striker: run ahead into a wide lane; stay ~260 ahead of ball
-          tx = W/2 + laneSide * 135 + Math.sin(performance.now() / 1400 + p.homeX) * 25;
-          ty = ball.y + forward * 260;
-          // Don't stand on the keeper — clamp short of the goal line
+          // Striker: reachable support run — 180 ahead of ball (was 260 = too far)
+          tx = W/2 + laneSide * 130 + Math.sin(performance.now() / 1400 + p.homeX) * 30;
+          ty = ball.y + forward * 180;
           const offsideY = isHomeTeam ? 95 : H - 95;
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
       } else {
-        // DEFENSE — pressure / cover / mark with the closest pressurer override
-        let closestToBall = null, closestDist = Infinity;
-        for (const mate of players) {
-          if (mate.team !== p.team || mate.role === 'keeper') continue;
-          const d = Math.hypot(mate.x - ball.x, mate.y - ball.y);
-          if (d < closestDist) { closestDist = d; closestToBall = mate; }
-        }
-
-        if (p === closestToBall) {
-          // PRESSURE the ball
-          tx = ball.x;
-          ty = ball.y;
-        } else if (p.role === 'defender') {
-          // COVER: sit between ball and own goal in own lane
+        // DEFENSE — shape role (not the engagement candidate)
+        if (p.role === 'defender') {
           tx = p.homeX * 0.55 + ball.x * 0.45;
-          // Retreat about halfway between ball and goal line, anchored to home Y
           ty = (ball.y + ownGoalY) / 2;
           ty = ty * 0.6 + p.homeY * 0.4;
         } else {
-          // Striker: hold forward outlet position for counter-attacks
-          // (~140 ahead of ball in own lane, in opponent half if possible)
+          // Striker: forward outlet, nearer midfield so the pass is reachable
           tx = W/2 + laneSide * 110;
-          ty = ball.y + forward * 140;
-          // Clamp to opponent half so we stay high for counters
+          ty = ball.y + forward * 110;
           ty = isHomeTeam ? Math.min(H * 0.48, ty) : Math.max(H * 0.52, ty);
         }
       }
+
+      // Remember whether we're engaging so we can sprint
+      p._engaging = engageBall;
     }
 
     // Separation — avoid clumping with same-team players
@@ -774,9 +784,10 @@
     const dy = (ty - p.y) + sepY;
     const d = Math.hypot(dx, dy);
 
-    // Speed: +15% for outfield (0.78 -> 0.90), +20% for keeper (0.95 -> 1.14)
+    // Speed: walk for holding position, sprint-ish when actively engaging the ball
     let speedLimit = PLAYER_WALK_MAX * 0.90;
     if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 1.14;
+    if (p._engaging) speedLimit = PLAYER_SPRINT_MAX * 0.88;
 
     let tvx = 0, tvy = 0;
     if (d > 4) {
@@ -841,8 +852,8 @@
     }
 
     // Enemy (away) shoots more aggressively from farther; home AI slightly more eager too
-    const shootRange = isHomeTeam ? 300 : 400;
-    const shootProb = isHomeTeam ? 0.028 : 0.042;
+    const shootRange = isHomeTeam ? 320 : 420;
+    const shootProb = isHomeTeam ? 0.045 : 0.065;
     if (distToGoal < shootRange && Math.random() < shootProb) {
       const tx = goalX + (Math.random() - 0.5) * (GOAL_WIDTH - 20);
       const ty = goalY;
@@ -865,7 +876,7 @@
     }
 
     // Pass decision — score candidates by forward progress + openness
-    if (Math.random() < 0.035) {
+    if (Math.random() < 0.055) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
@@ -998,6 +1009,7 @@
       if (ball.y - ball.r < goalTopY + GOAL_DEPTH && ball.x > goalTopX + 3 && ball.x < goalTopX + GOAL_WIDTH - 3 && ball.z < 50) {
         if (ball.y < goalTopY + GOAL_DEPTH - 2) {
           scoreHome++;
+          lastScorer = 'home';
           scoreHomeEl.textContent = scoreHome;
           flickResolved = true;
           flashText('GOAL!', '#ffd84a');
@@ -1011,6 +1023,7 @@
       if (ball.y + ball.r > goalBotY && ball.x > goalBotX + 3 && ball.x < goalBotX + GOAL_WIDTH - 3 && ball.z < 50) {
         if (ball.y > goalBotY + 2) {
           scoreAway++;
+          lastScorer = 'away';
           scoreAwayEl.textContent = scoreAway;
           flickResolved = true;
           flashText('CONCEDED', '#ff6b6b');
@@ -1089,10 +1102,19 @@
     }
     userPlayer.stamina = STAMINA_MAX;
 
-    // Give user possession to start
-    ball.possessedBy = userPlayer;
-    ball.x = userPlayer.x;
-    ball.y = userPlayer.y - DRIBBLE_OFFSET;
+    // Possession alternates: team that conceded kicks off. User gets
+    // the ball at game start (lastScorer === null) and after they concede.
+    if (lastScorer === 'home') {
+      // Home scored — away takes kickoff
+      const awayStriker = players.find(pp => pp.team === 'away' && pp.role === 'striker');
+      ball.possessedBy = awayStriker;
+      ball.x = awayStriker.x;
+      ball.y = awayStriker.y + DRIBBLE_OFFSET;
+    } else {
+      ball.possessedBy = userPlayer;
+      ball.x = userPlayer.x;
+      ball.y = userPlayer.y - DRIBBLE_OFFSET;
+    }
   }
 
   // ============================================================
@@ -1376,6 +1398,7 @@
         flashText(result, scoreHome >= scoreAway ? '#ffd84a' : '#ff6b6b');
         setTimeout(() => {
           scoreHome = 0; scoreAway = 0;
+          lastScorer = null;
           scoreHomeEl.textContent = 0;
           scoreAwayEl.textContent = 0;
           matchStartTime = performance.now();
