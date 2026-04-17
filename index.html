@@ -284,7 +284,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.0.0</div>
+  <div id="version-tag">v3.1.0</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -368,9 +368,9 @@
   const goalBotX = W/2 - GOAL_WIDTH/2;
   const goalBotY = H - 6 - GOAL_DEPTH;
 
-  const PLAYER_WALK_MAX = 2.02;
-  const PLAYER_SPRINT_MAX = 3.24;
-  const PLAYER_ACCEL = 0.175;
+  const PLAYER_WALK_MAX = 2.12;
+  const PLAYER_SPRINT_MAX = 3.4;
+  const PLAYER_ACCEL = 0.184;
   const PLAYER_DECEL = 0.18;
 
   const STAMINA_MAX = 100;
@@ -381,15 +381,15 @@
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
   // Ball — realistic weight; hard shots travel meaningfully but don't
   // pinball around the field. More drag = ball decelerates faster.
-  const MAX_BALL_PX_PER_FRAME = 8.5;
-  const MIN_SHOT_SPEED = 1.5;
-  const POWER_SCALE = 0.0036;
-  const POWER_BASELINE = 1.55;
+  const MAX_BALL_PX_PER_FRAME = 8.07;
+  const MIN_SHOT_SPEED = 1.42;
+  const POWER_SCALE = 0.0034;
+  const POWER_BASELINE = 1.47;
   const LINEAR_DRAG = 0.012;
   const QUAD_DRAG = 0.0038;
 
   const MAX_SPIN = 0.26;
-  const MAGNUS_COEFF = 0.022;
+  const MAGNUS_COEFF = 0.042;
   const SPIN_DECAY = 0.982;
 
   const GRAVITY = 0.36;
@@ -855,8 +855,9 @@
         const clampedMag = Math.min(mag, maxReach);
         inX = (dx / mag);
         inY = (dy / mag);
-        // Sprint only when joystick pushed hard past ~82% of max reach
-        if (mag > maxReach * 0.82) sprintInput = true;
+        // Sprint only on near-full joystick extension — keeps walking/jogging
+        // as the default and stops accidental sprinting
+        if (mag > maxReach * 0.97) sprintInput = true;
       }
     } else {
       // Keyboard fallback
@@ -1246,34 +1247,58 @@
 
         if (score > bestScore) { bestScore = score; bestMate = mate; }
       }
+      // Only pass if we have a genuinely open teammate AND the passing
+      // lane is clear (no opponent standing between passer and receiver).
+      // Otherwise, hold possession and dribble — the AI keeps the ball
+      // instead of forcing a pass through traffic.
       if (bestMate) {
+        // Compute openness of chosen target (distance to nearest opp)
+        let targetOpen = Infinity;
+        for (const opp of players) {
+          if (opp.team === p.team) continue;
+          const od = Math.hypot(opp.x - bestMate.x, opp.y - bestMate.y);
+          if (od < targetOpen) targetOpen = od;
+        }
+        // Line-of-sight: check if any opponent is within 30 units of the
+        // line between passer and receiver, somewhere in the middle 80%
         const dx = bestMate.x - p.x, dy = bestMate.y - p.y;
         const d = Math.hypot(dx, dy);
-        // Lead the pass slightly toward the receiver's velocity
-        const leadX = bestMate.vx * 8;
-        const leadY = bestMate.vy * 8;
-        const ldx = dx + leadX, ldy = dy + leadY;
-        const ld = Math.hypot(ldx, ldy);
-        // Pass power — tuned so the ball arrives under the 8-unit pickup
-        // threshold after drag, so the receiver actually traps it instead
-        // of having it bounce off them
-        const power = Math.min(6.0, 2.6 + d * 0.012);
-        ball.possessedBy = null;
-        ball.x = p.x + (ldx/ld) * (p.r + ball.r + 2);
-        ball.y = p.y + (ldy/ld) * (p.r + ball.r + 2);
-        ball.vx = (ldx/ld) * power;
-        ball.vy = (ldy/ld) * power;
-        ball.vz = 0; ball.z = 0;
-        ball.spin = 0;
-        p._kickCooldown = 60;
-        p._possessionTime = 0;
-        ball._lastKicker = p;
-        ball._kickCooldown = 30;
-        ball._isShot = false;
-        stats[p.team].passes++;
-        flickResolved = false;
-        p.kickAnimT = 0; p.kickAnimDur = 12;
-        p.kickAnimDir = { x: ldx/ld, y: ldy/ld };
+        let laneBlocked = false;
+        for (const opp of players) {
+          if (opp.team === p.team) continue;
+          const odx = opp.x - p.x, ody = opp.y - p.y;
+          const t = (odx * dx + ody * dy) / (d * d);
+          if (t < 0.1 || t > 0.9) continue;
+          const projX = p.x + dx * t, projY = p.y + dy * t;
+          const laneDist = Math.hypot(opp.x - projX, opp.y - projY);
+          if (laneDist < 30) { laneBlocked = true; break; }
+        }
+
+        const minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 40 : 60;
+        if (!laneBlocked && targetOpen >= minOpen) {
+          const leadX = bestMate.vx * 8;
+          const leadY = bestMate.vy * 8;
+          const ldx = dx + leadX, ldy = dy + leadY;
+          const ld = Math.hypot(ldx, ldy);
+          const power = Math.min(6.0, 2.6 + d * 0.012);
+          ball.possessedBy = null;
+          ball.x = p.x + (ldx/ld) * (p.r + ball.r + 2);
+          ball.y = p.y + (ldy/ld) * (p.r + ball.r + 2);
+          ball.vx = (ldx/ld) * power;
+          ball.vy = (ldy/ld) * power;
+          ball.vz = 0; ball.z = 0;
+          ball.spin = 0;
+          p._kickCooldown = 60;
+          p._possessionTime = 0;
+          ball._lastKicker = p;
+          ball._kickCooldown = 30;
+          ball._isShot = false;
+          stats[p.team].passes++;
+          flickResolved = false;
+          p.kickAnimT = 0; p.kickAnimDur = 12;
+          p.kickAnimDir = { x: ldx/ld, y: ldy/ld };
+        }
+        // else: no pass — keep dribbling
       }
     }
   }
@@ -1544,11 +1569,22 @@
           flickResolved = true;
           break;
         } else if (!flickResolved) {
+          // If this was a shot heading toward the shooter's goal and a
+          // defender blocked it, that counts as a shot on goal too.
+          if (ball._isShot && ball._lastKicker && ball._lastKicker.team !== p.team) {
+            const shooterTeam = ball._lastKicker.team;
+            const movingGoalward = shooterTeam === 'home' ? ball.vy < -1 : ball.vy > 1;
+            const nearGoalLane = Math.abs(ball.x - W/2) < GOAL_WIDTH * 0.85;
+            if (movingGoalward && nearGoalLane) {
+              stats[shooterTeam].shotsOnGoal++;
+              ball._isShot = false;
+            }
+          }
           const nx = ddx / ddist, ny = ddy / ddist;
           const dot = ball.vx * nx + ball.vy * ny;
           ball.vx -= 2 * dot * nx;
           ball.vy -= 2 * dot * ny;
-          ball.vx *= 0.4; ball.vy *= 0.4; // kill more energy on deflect
+          ball.vx *= 0.4; ball.vy *= 0.4;
           p.stunned = 30;
           if (p.team !== userPlayer.team) flashText('BLOCKED', '#ff9f40');
         }
@@ -1800,14 +1836,14 @@
       const nx = mag > 0 ? dx/mag : 0;
       const ny = mag > 0 ? dy/mag : 0;
       // Sprint ring (appears when pushed hard)
-      if (mag > 60 * 0.82) {
+      if (mag > 60 * 0.97) {
         ctx.strokeStyle = 'rgba(255, 216, 74, 0.7)';
         ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.arc(input.joyStartX, input.joyStartY, 66, 0, Math.PI*2);
         ctx.stroke();
       }
-      ctx.fillStyle = mag > 60 * 0.82 ? 'rgba(255, 216, 74, 0.9)' : 'rgba(255,255,255,0.8)';
+      ctx.fillStyle = mag > 60 * 0.97 ? 'rgba(255, 216, 74, 0.9)' : 'rgba(255,255,255,0.8)';
       ctx.beginPath();
       ctx.arc(input.joyStartX + nx * clamped, input.joyStartY + ny * clamped, 22, 0, Math.PI*2);
       ctx.fill();
@@ -2115,6 +2151,10 @@
       if (countdownFrames <= 0) {
         gameState = 'playing';
         countdownEl.classList.remove('visible');
+        // Real-soccer kickoff — the possessor MUST pass the ball to
+        // start play. Auto-kick to nearest teammate (applies to user and
+        // AI alike, so neither can just dribble from center).
+        performKickoffPass();
       }
       // still animate particles/flash during countdown
       updateParticles();
@@ -2170,6 +2210,40 @@
 
     // Track possession (one frame of credit to whichever team holds the ball)
     if (ball.possessedBy) stats[ball.possessedBy.team].possessionFrames++;
+  }
+
+  // Kickoff pass — real soccer rule: the taker must play the ball to a
+  // teammate to start play. Called right when countdown hits GO. Applies
+  // to the user and the AI alike so no one just dribbles out of the centre.
+  function performKickoffPass() {
+    const taker = ball.possessedBy;
+    if (!taker) return;
+    // Pick nearest teammate (non-keeper) as the pass target
+    let target = null, tdist = Infinity;
+    for (const mate of players) {
+      if (mate === taker || mate.team !== taker.team || mate.role === 'keeper') continue;
+      const d = Math.hypot(mate.x - taker.x, mate.y - taker.y);
+      if (d < tdist) { tdist = d; target = mate; }
+    }
+    if (!target) return;
+    const dx = target.x - taker.x, dy = target.y - taker.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const power = 3.4;
+    ball.possessedBy = null;
+    ball.x = taker.x + (dx/d) * (taker.r + ball.r + 2);
+    ball.y = taker.y + (dy/d) * (taker.r + ball.r + 2);
+    ball.vx = (dx/d) * power;
+    ball.vy = (dy/d) * power;
+    ball.vz = 0; ball.z = 0;
+    ball.spin = 0;
+    flickResolved = false;
+    ball._lastKicker = taker;
+    ball._kickCooldown = 30;
+    ball._isShot = false;
+    stats[taker.team].passes++;
+    taker.kickAnimT = 0;
+    taker.kickAnimDur = 10;
+    taker.kickAnimDir = { x: dx/d, y: dy/d };
   }
 
   function startCountdown() {
