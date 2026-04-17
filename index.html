@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.2.3</div>
+  <div id="version-tag">v3.3.0</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -543,6 +543,9 @@
   let lobMode = false;
   let flickResolved = true;
   let flashMsg = null;
+  // Dedicated banner for persistent messages like position switches.
+  // Separate from flashMsg so it can last longer and render bigger.
+  let banner = null; // { title, subtitle, color, t, duration }
   const particles = [];
   // Visual shockwave rings spawned on tackles — expanding ring with fade
   const shockwaves = [];
@@ -1298,12 +1301,19 @@
     // Lower pass frequency so AI dribbles / carries more. Hot-potato
     // still kicks in briefly after winning the ball.
     const passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
+    // Carrier in their own defensive third plays safely — backpasses and
+    // crosses are valid options, keeper is a legal outlet.
+    const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.68) : (p.y < H * 0.32);
+
     if (Math.random() < passProb) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
-        if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
+        if (mate === p || mate.team !== p.team) continue;
+        // Keeper only becomes a legal outlet when carrier is in own third
+        if (mate.role === 'keeper' && !carrierInOwnThird) continue;
+
         const ahead = isHomeTeam ? (p.y - mate.y) : (mate.y - p.y);
-        // Allow back-passes but at reduced priority (no hard cutoff)
+        const lateralDist = Math.abs(mate.x - p.x);
 
         // Openness: distance to nearest opponent
         let mateMarkDist = Infinity;
@@ -1312,20 +1322,30 @@
           const od = Math.hypot(opp.x - mate.x, opp.y - mate.y);
           if (od < mateMarkDist) mateMarkDist = od;
         }
-        const openness = Math.min(140, mateMarkDist); // cap contribution
+        const openness = Math.min(140, mateMarkDist);
 
         const distPenalty = Math.hypot(mate.x - p.x, mate.y - p.y) * 0.15;
-        let score = (ahead >= 0 ? ahead * 0.5 : ahead * 0.2) + openness * 1.1 - distPenalty;
-        // Prefer passing to the human player when they're on our team
-        // No intrinsic user bonus — pick whoever is best positioned.
-        // A modest bonus for a moving user (indicates they're engaged),
-        // but NOT for a user standing still in a corner.
+
+        let score;
+        if (carrierInOwnThird) {
+          // Defensive-third play: value openness strongly, tolerate all
+          // directions (back, lateral, forward). Reward a backpass /
+          // cross to an open teammate.
+          score = openness * 1.5 - distPenalty * 0.7;
+          if (mate.role === 'keeper') score += 25; // safety outlet
+          if (ahead < 0) score += 15;              // backpass bonus
+          if (lateralDist > 150) score += 12;      // cross/switch bonus
+        } else {
+          // Midfield / attacking: prefer forward + open
+          score = (ahead >= 0 ? ahead * 0.5 : ahead * 0.2) + openness * 1.1 - distPenalty;
+          if (mate.role === 'striker') score += 15;
+        }
+
+        // User bonus only when user is actually engaged (moving)
         if (mate.isUser && isHomeTeam) {
           const userMoving = Math.hypot(mate.vx, mate.vy) > 0.6;
           if (userMoving) score += 12;
         }
-        // Prefer striker for final ball
-        if (mate.role === 'striker') score += 15;
 
         if (score > bestScore) { bestScore = score; bestMate = mate; }
       }
@@ -1356,7 +1376,10 @@
           if (laneDist < 40) { laneBlocked = true; break; }
         }
 
-        const minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 50 : 75;
+        // Defensive-third carriers accept slightly less-open teammates —
+        // a safe backpass beats forcing forward play from under pressure.
+        let minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 50 : 75;
+        if (carrierInOwnThird) minOpen = 45;
         if (!laneBlocked && targetOpen >= minOpen) {
           const leadX = bestMate.vx * 8;
           const leadY = bestMate.vy * 8;
@@ -1871,15 +1894,25 @@
     const label = p.role === 'keeper' ? 'GK' : (p.isUser ? '10' : (p.role === 'striker' ? '9' : (p.team === 'home' ? '4' : '5')));
     ctx.fillText(label, p.x, p.y);
 
-    // Facing indicator
-    const fx = p.x + Math.cos(p.facing) * (p.r + 2);
-    const fy = p.y + Math.sin(p.facing) * (p.r + 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(fx, fy);
-    ctx.stroke();
+    // Facing indicator — small filled chevron on the player's leading
+    // edge, outside the body. Replaces the old antenna line; reads as
+    // the direction the player is looking without cluttering the jersey.
+    {
+      const cos = Math.cos(p.facing), sin = Math.sin(p.facing);
+      const baseX = p.x + cos * (p.r - 1);
+      const baseY = p.y + sin * (p.r - 1);
+      const tipX = p.x + cos * (p.r + 5);
+      const tipY = p.y + sin * (p.r + 5);
+      const perpX = Math.cos(p.facing + Math.PI/2) * 3.5;
+      const perpY = Math.sin(p.facing + Math.PI/2) * 3.5;
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(baseX + perpX, baseY + perpY);
+      ctx.lineTo(baseX - perpX, baseY - perpY);
+      ctx.closePath();
+      ctx.fill();
+    }
 
     // Kicking leg
     const kickProgress = p.kickAnimDur > 0 ? p.kickAnimT / p.kickAnimDur : 1;
@@ -1914,15 +1947,35 @@
     }
 
     const drawY = ball.y - ball.z;
+    // White base + outline
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
     ctx.arc(ball.x, drawY, ball.r, 0, Math.PI*2);
     ctx.fill(); ctx.stroke();
+
+    // Soccer-ball pattern: central black pentagon + 5 smaller pentagons
+    // around it, all rotating with ball.rotation for a rolling look.
     ctx.fillStyle = '#1a1a1a';
+    drawPentagonShape(ball.x, drawY, ball.r * 0.42, ball.rotation);
+    for (let i = 0; i < 5; i++) {
+      const ang = ball.rotation + (i / 5) * Math.PI * 2 + Math.PI / 5;
+      const px = ball.x + Math.cos(ang) * ball.r * 0.72;
+      const py = drawY + Math.sin(ang) * ball.r * 0.72;
+      drawPentagonShape(px, py, ball.r * 0.22, ball.rotation + ang);
+    }
+  }
+
+  function drawPentagonShape(cx, cy, size, rotation) {
     ctx.beginPath();
-    ctx.arc(ball.x + Math.cos(ball.rotation) * 3, drawY + Math.sin(ball.rotation) * 3, 1.6, 0, Math.PI*2);
+    for (let i = 0; i < 5; i++) {
+      const a = rotation - Math.PI/2 + (i / 5) * Math.PI * 2;
+      const x = cx + Math.cos(a) * size;
+      const y = cy + Math.sin(a) * size;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
     ctx.fill();
   }
 
@@ -2486,7 +2539,11 @@
     userPlayer._slot = t4;
 
     const labels = { striker: 'STRIKER', ldef: 'LEFT BACK', rdef: 'RIGHT BACK' };
-    flashText('YOU: ' + labels[targetSlot], '#ffd84a');
+    showBanner('YOU\'RE MOVING TO', labels[targetSlot], '#ffd84a', 240);
+  }
+
+  function showBanner(title, subtitle, color, duration) {
+    banner = { title, subtitle, color, duration, t: 0 };
   }
 
   function updateCountdownDisplay() {
@@ -2507,7 +2564,42 @@
     drawParticles();
     drawShockwaves();
     drawFlash();
+    drawBanner();
     drawTouchControls();
+  }
+
+  function drawBanner() {
+    if (!banner) return;
+    banner.t++;
+    if (banner.t >= banner.duration) { banner = null; return; }
+    // Fade in over first 12 frames, hold, fade out over last 30
+    const t = banner.t, d = banner.duration;
+    let alpha = 1;
+    if (t < 12) alpha = t / 12;
+    else if (t > d - 30) alpha = Math.max(0, (d - t) / 30);
+
+    ctx.globalAlpha = alpha;
+    // Dark backing
+    const bx = W/2, by = H * 0.42;
+    const bw = W * 0.82, bh = 110;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(bx - bw/2, by - bh/2, bw, bh);
+    ctx.strokeStyle = banner.color;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(bx - bw/2, by - bh/2, bw, bh);
+
+    // Title ('YOU'RE MOVING TO')
+    ctx.fillStyle = '#e5e5e5';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(banner.title, bx, by - 22);
+    // Subtitle (position name) in color
+    ctx.fillStyle = banner.color;
+    ctx.font = 'bold 34px sans-serif';
+    ctx.fillText(banner.subtitle, bx, by + 18);
+
+    ctx.globalAlpha = 1;
   }
 
   function loop(now) {
