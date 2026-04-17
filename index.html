@@ -245,10 +245,10 @@
   const goalBotX = W/2 - GOAL_WIDTH/2;
   const goalBotY = H - 6 - GOAL_DEPTH;
 
-  const PLAYER_WALK_MAX = 0.95;
-  const PLAYER_SPRINT_MAX = 1.55;
-  const PLAYER_ACCEL = 0.09;
-  const PLAYER_DECEL = 0.08;
+  const PLAYER_WALK_MAX = 0.82;
+  const PLAYER_SPRINT_MAX = 1.32;
+  const PLAYER_ACCEL = 0.075;
+  const PLAYER_DECEL = 0.07;
 
   const STAMINA_MAX = 100;
   const STAMINA_DRAIN = 0.32;
@@ -256,18 +256,18 @@
   const STAMINA_MIN_TO_SPRINT = 8;
 
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
-  const MAX_BALL_PX_PER_FRAME = 4.5;
-  const MIN_SHOT_SPEED = 0.85;
-  const POWER_SCALE = 0.002;
-  const POWER_BASELINE = 1.0;
-  const LINEAR_DRAG = 0.011;
-  const QUAD_DRAG = 0.003;
+  const MAX_BALL_PX_PER_FRAME = 3.9;
+  const MIN_SHOT_SPEED = 0.72;
+  const POWER_SCALE = 0.0017;
+  const POWER_BASELINE = 0.85;
+  const LINEAR_DRAG = 0.009;
+  const QUAD_DRAG = 0.0025;
 
   const MAX_SPIN = 0.26;
   const MAGNUS_COEFF = 0.022;
   const SPIN_DECAY = 0.982;
 
-  const GRAVITY = 0.19;
+  const GRAVITY = 0.16;
   const LOB_LAUNCH_MULT = 0.7;
 
   const DRIBBLE_OFFSET = 20;
@@ -815,7 +815,7 @@
       const ty = goalY;
       const dx = tx - p.x, dy = ty - p.y;
       const d = Math.hypot(dx, dy);
-      const power = 3.3 + Math.random() * 0.9;
+      const power = 2.8 + Math.random() * 0.7;
       ball.possessedBy = null;
       ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
       ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
@@ -844,7 +844,7 @@
       if (bestMate) {
         const dx = bestMate.x - p.x, dy = bestMate.y - p.y;
         const d = Math.hypot(dx, dy);
-        const power = Math.min(3.3, 1.5 + d * 0.007);
+        const power = Math.min(2.8, 1.2 + d * 0.006);
         ball.possessedBy = null;
         ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
         ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
@@ -992,7 +992,7 @@
         }
         // Other players: pick up if ball slow, deflect if fast
         const ballSpeed = Math.hypot(ball.vx, ball.vy);
-        if (ballSpeed < 2.5 && flickResolved) {
+        if (ballSpeed < 2.2 && flickResolved) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
           if (p === userPlayer) flickResolved = true;
@@ -1285,7 +1285,6 @@
 
   function drawFlash() {
     if (!flashMsg) return;
-    flashMsg.t++;
     const alpha = Math.max(0, 1 - flashMsg.t / 55);
     ctx.fillStyle = flashMsg.color;
     ctx.globalAlpha = alpha;
@@ -1294,7 +1293,6 @@
     ctx.textBaseline = 'middle';
     ctx.fillText(flashMsg.text, W/2, H/2);
     ctx.globalAlpha = 1;
-    if (flashMsg.t > 55) flashMsg = null;
   }
 
   function drawParticles() {
@@ -1334,16 +1332,29 @@
   }
 
   // ============================================================
-  // MAIN LOOP
+  // MAIN LOOP — fixed 60Hz physics, variable-rate render
+  // Prevents high-refresh displays (120Hz+) from running the game at 2x
+  // speed, and prevents frame jitter from visibly accelerating the sim.
   // ============================================================
-  function loop() {
+  const FIXED_DT_MS = 1000 / 60;
+  const MAX_TICKS_PER_FRAME = 6;
+  let accumulator = 0;
+  let lastFrameTime = null;
+
+  function step() {
     updateTimer();
     updateUserPlayer();
     for (const p of players) updateAI(p);
     dribbleBall();
     updateBall();
     updateParticles();
+    if (flashMsg) {
+      flashMsg.t++;
+      if (flashMsg.t > 55) flashMsg = null;
+    }
+  }
 
+  function render() {
     ctx.clearRect(0, 0, W, H);
     drawPitch();
     for (const p of players) drawPlayer(p);
@@ -1351,14 +1362,30 @@
     drawParticles();
     drawFlash();
     drawTouchControls();
+  }
 
+  function loop(now) {
+    if (lastFrameTime === null) lastFrameTime = now;
+    const delta = Math.min(250, now - lastFrameTime);
+    lastFrameTime = now;
+    accumulator += delta;
+
+    let ticks = 0;
+    while (accumulator >= FIXED_DT_MS && ticks < MAX_TICKS_PER_FRAME) {
+      step();
+      accumulator -= FIXED_DT_MS;
+      ticks++;
+    }
+    if (ticks === MAX_TICKS_PER_FRAME) accumulator = 0; // drop backlog on long hitches
+
+    render();
     requestAnimationFrame(loop);
   }
 
   // Kick it off
   setupPlayers();
   kickoff();
-  loop();
+  requestAnimationFrame(loop);
 })();
 </script>
 </body>
