@@ -222,7 +222,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">V24</div>
+  <div id="version-tag">V25</div>
 </div>
 <div id="endscreen"></div>
 
@@ -981,10 +981,35 @@
     const dy = (ty - p.y) + sepY;
     const d = Math.hypot(dx, dy);
 
-    // Speed: walk for holding position, full sprint when engaging the ball
+    // Speed: walk when holding position; sprint when engaging, but only
+    // while stamina allows — same mechanic the user has, so AI can't
+    // endlessly run the user down.
     let speedLimit = PLAYER_WALK_MAX * 0.90;
     if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 1.14;
-    if (p._engaging) speedLimit = PLAYER_SPRINT_MAX * 1.00;
+
+    if (p._engaging) {
+      // Start sprinting only with enough stamina (matches user's rule)
+      if (!p._sprintingAI && p.stamina > STAMINA_MIN_TO_SPRINT) {
+        p._sprintingAI = true;
+      }
+      // Keep sprinting until stamina depleted
+      if (p._sprintingAI && p.stamina <= 0) {
+        p._sprintingAI = false;
+      }
+      if (p._sprintingAI) {
+        speedLimit = PLAYER_SPRINT_MAX * 1.00;
+      }
+    } else {
+      p._sprintingAI = false;
+    }
+
+    if (p._sprintingAI) {
+      p.stamina = Math.max(0, p.stamina - STAMINA_DRAIN);
+      p.isSprinting = true; // so the visual trail draws
+    } else {
+      p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN);
+      p.isSprinting = false;
+    }
 
     // Dead zone — don't jitter around the target. Tight when chasing ball,
     // wide when holding a position so players visibly "stand" in their zone.
@@ -1163,7 +1188,7 @@
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
       const d = Math.hypot(dx, dy);
-      const contactDist = p.r + carrier.r + 10;
+      const contactDist = p.r + carrier.r + 14;
 
       if (d < contactDist) {
         // TACKLE — transfer possession, shove old carrier clear, stun
