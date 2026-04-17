@@ -142,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V19</div>
+  <div id="version-tag">V20</div>
 </div>
 
 <script>
@@ -936,7 +936,10 @@
         const leadY = bestMate.vy * 8;
         const ldx = dx + leadX, ldy = dy + leadY;
         const ld = Math.hypot(ldx, ldy);
-        const power = Math.min(7.5, 3.2 + d * 0.017);
+        // Pass power — tuned so the ball arrives under the 8-unit pickup
+        // threshold after drag, so the receiver actually traps it instead
+        // of having it bounce off them
+        const power = Math.min(6.0, 2.6 + d * 0.012);
         ball.possessedBy = null;
         ball.x = p.x + (ldx/ld) * (p.r + ball.r + 2);
         ball.y = p.y + (ldy/ld) * (p.r + ball.r + 2);
@@ -978,7 +981,7 @@
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
       const d = Math.hypot(dx, dy);
-      const contactDist = p.r + carrier.r + 3;
+      const contactDist = p.r + carrier.r + 10;
 
       if (d < contactDist) {
         // TACKLE — transfer possession, bump old carrier back, stun
@@ -1152,7 +1155,7 @@
         }
         // Other players: pick up if ball slow, deflect if fast
         const ballSpeed = Math.hypot(ball.vx, ball.vy);
-        if (ballSpeed < 7.4 && flickResolved) {
+        if (ballSpeed < 8.0 && flickResolved) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
           if (p === userPlayer) flickResolved = true;
