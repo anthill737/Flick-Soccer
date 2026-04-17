@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.4.2</div>
+  <div id="version-tag">v3.4.3</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1068,6 +1068,10 @@
       let engageBall = false;
       if (!ballCarrier && ballRank === 0) engageBall = true;
       else if (!ourPossession && ballRank === 0) engageBall = true;
+      // The carrier sprints when they're in the opponent half so they
+      // can drive to shooting range instead of ambling the whole field.
+      const ballInOppHalfPre = isHomeTeam ? (smoothedBall.y < H * 0.5) : (smoothedBall.y > H * 0.5);
+      if (p === ball.possessedBy && ourPossession && ballInOppHalfPre) engageBall = true;
       p._engaging = engageBall;
 
       if (ourPossession) {
@@ -1307,28 +1311,6 @@
         p.kickAnimDir = { x: dx/d, y: dy/d };
         return;
       }
-    }
-
-    // FORCED CLEAR: if AI has held ball > 90 frames (~1.5s), boot it forward
-    // prevents the ball getting stuck when no good pass/shot exists
-    if (p._possessionTime > 90) {
-      const dx = goalX - p.x;
-      const dy = (isHomeTeam ? goalTopY : goalBotY + GOAL_DEPTH) - p.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const power = 6 + Math.random() * 1.5;
-      ball.possessedBy = null;
-      ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
-      ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
-      ball.vx = (dx/d) * power + (Math.random() - 0.5) * 1.5;
-      ball.vy = (dy/d) * power;
-      ball.vz = 0; ball.z = 0;
-      ball.spin = 0;
-      p._kickCooldown = 40;
-      p._possessionTime = 0;
-      flickResolved = false;
-      p.kickAnimT = 0; p.kickAnimDur = 12;
-      p.kickAnimDir = { x: dx/d, y: dy/d };
-      return;
     }
 
     // Symmetric shot rules — both teams use the same range and base
