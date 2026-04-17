@@ -131,7 +131,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V10</div>
+  <div id="version-tag">V11</div>
 </div>
 
 <script>
@@ -219,12 +219,14 @@
   const STAMINA_MIN_TO_SPRINT = 8;
 
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
-  const MAX_BALL_PX_PER_FRAME = 10.4;
-  const MIN_SHOT_SPEED = 1.92;
-  const POWER_SCALE = 0.0046;
-  const POWER_BASELINE = 2.32;
-  const LINEAR_DRAG = 0.009;
-  const QUAD_DRAG = 0.0025;
+  // Ball — lighter & rollier. Low linear drag so it keeps rolling;
+  // a hard flick can really sail down the pitch.
+  const MAX_BALL_PX_PER_FRAME = 13.5;
+  const MIN_SHOT_SPEED = 2.0;
+  const POWER_SCALE = 0.0056;
+  const POWER_BASELINE = 2.1;
+  const LINEAR_DRAG = 0.004;
+  const QUAD_DRAG = 0.0014;
 
   const MAX_SPIN = 0.26;
   const MAGNUS_COEFF = 0.022;
@@ -702,33 +704,31 @@
       }
     } else {
       const ballCarrier = ball.possessedBy;
+      const ourPossession = ballCarrier && ballCarrier.team === p.team;
+      // Home attacks up (-y), away attacks down (+y)
+      const forward = isHomeTeam ? -1 : 1;
+      const laneSide = p.homeX < W/2 ? -1 : 1; // left or right lane based on home
 
-      if (ballCarrier && ballCarrier.team === p.team) {
-        // TEAMMATE HAS BALL: support play
-        if (ballCarrier.isUser) {
-          if (p.role === 'defender') {
-            tx = p.homeX;
-            ty = isHomeTeam
-              ? Math.min(H * 0.78, ball.y + 60)
-              : Math.max(H * 0.22, ball.y - 60);
-          } else {
-            // Striker/mid: run into space ahead of user toward goal
-            const laneOffset = (p.homeX < W/2 ? -1 : 1) * 120;
-            tx = W/2 + laneOffset + Math.sin(performance.now() / 1200 + p.homeX) * 25;
-            ty = isHomeTeam ? ball.y - 240 : ball.y + 240;
-          }
+      // Base formation position — always computed from ball position so the team
+      // shifts up the pitch as attacks develop instead of bouncing to home spots.
+      if (ourPossession) {
+        // OFFENSE: push up pitch in our lane
+        if (p.role === 'defender') {
+          // Defender: hold own lane ~110 behind the ball (outlet + defensive cover)
+          tx = p.homeX;
+          ty = ball.y - forward * 110;
+          // Never cross the halfway line into the opponent half
+          ty = isHomeTeam ? Math.max(H * 0.52, ty) : Math.min(H * 0.48, ty);
         } else {
-          if (p.role === 'striker' || p.role === 'mid') {
-            tx = ball.x + (Math.random() - 0.5) * 40;
-            ty = isHomeTeam ? ball.y - 160 : ball.y + 160;
-          } else {
-            tx = p.homeX;
-            ty = p.homeY;
-          }
+          // Striker: run ahead into a wide lane; stay ~260 ahead of ball
+          tx = W/2 + laneSide * 135 + Math.sin(performance.now() / 1400 + p.homeX) * 25;
+          ty = ball.y + forward * 260;
+          // Don't stand on the keeper — clamp short of the goal line
+          const offsideY = isHomeTeam ? 95 : H - 95;
+          ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
       } else {
-        // DEFENSIVE PHASE: real soccer roles — pressure, cover, mark
-        // Find closest teammate (outfield) to ball
+        // DEFENSE — pressure / cover / mark with the closest pressurer override
         let closestToBall = null, closestDist = Infinity;
         for (const mate of players) {
           if (mate.team !== p.team || mate.role === 'keeper') continue;
@@ -737,31 +737,22 @@
         }
 
         if (p === closestToBall) {
-          // PRESSURE: closest player closes down the ball
+          // PRESSURE the ball
           tx = ball.x;
           ty = ball.y;
         } else if (p.role === 'defender') {
-          // COVER: sit between ball and own goal, slightly goal-side
-          const coverBias = 0.42;
-          tx = ball.x * (1 - coverBias) + ownGoalX * coverBias;
-          ty = ball.y * (1 - coverBias) + ownGoalY * coverBias;
-          // Anchor toward home column so defenders don't both chase same lane
-          tx = tx * 0.55 + p.homeX * 0.45;
+          // COVER: sit between ball and own goal in own lane
+          tx = p.homeX * 0.55 + ball.x * 0.45;
+          // Retreat about halfway between ball and goal line, anchored to home Y
+          ty = (ball.y + ownGoalY) / 2;
+          ty = ty * 0.6 + p.homeY * 0.4;
         } else {
-          // MARK: pick nearest opposing attacker, take goal-side position
-          let target = null, tdist = Infinity;
-          for (const opp of players) {
-            if (opp.team === p.team || opp.role === 'keeper') continue;
-            const d = Math.hypot(opp.x - p.x, opp.y - p.y);
-            if (d < tdist) { tdist = d; target = opp; }
-          }
-          if (target) {
-            // Stand on goal-side of the attacker
-            tx = target.x;
-            ty = target.y + (isHomeTeam ? 22 : -22);
-          } else {
-            tx = p.homeX; ty = p.homeY;
-          }
+          // Striker: hold forward outlet position for counter-attacks
+          // (~140 ahead of ball in own lane, in opponent half if possible)
+          tx = W/2 + laneSide * 110;
+          ty = ball.y + forward * 140;
+          // Clamp to opponent half so we stay high for counters
+          ty = isHomeTeam ? Math.min(H * 0.48, ty) : Math.max(H * 0.52, ty);
         }
       }
     }
@@ -1073,8 +1064,8 @@
       }
     }
 
-    // Settle
-    if (Math.hypot(ball.vx, ball.vy) < 0.18 && ball.z < 0.5 && Math.abs(ball.vz) < 0.3) {
+    // Settle — lower threshold so the ball rolls out longer before stopping
+    if (Math.hypot(ball.vx, ball.vy) < 0.08 && ball.z < 0.5 && Math.abs(ball.vz) < 0.2) {
       ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.vz = 0; ball.z = 0;
       flickResolved = true;
     }
