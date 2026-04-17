@@ -108,6 +108,66 @@
   #countdown.visible { display: block; }
 
   /* End-of-match screen */
+  /* Intro / start screen — shown on first load, translucent over the
+     frozen game. Buttons to start or view prior stats. */
+  #intro {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 12, 16, 0.88);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 28px 20px;
+    z-index: 1300;
+    color: #e5e5e5;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow-y: auto;
+  }
+  #intro.visible { display: flex; }
+  #intro h1 {
+    font-size: 30px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #ffd84a;
+    text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    margin-bottom: 4px;
+    text-align: center;
+  }
+  #intro .tagline { font-size: 12px; color: #aaa; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 20px; }
+  #intro .controls { width: 100%; max-width: 340px; margin-bottom: 20px; }
+  #intro .controls h3 { font-size: 12px; color: #888; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+  #intro .control-row {
+    display: flex;
+    align-items: flex-start;
+    padding: 6px 0;
+    font-size: 13px;
+    line-height: 1.4;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  #intro .control-row:last-child { border-bottom: none; }
+  #intro .control-row .icon {
+    flex: 0 0 60px;
+    color: #ffd84a;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    padding-top: 2px;
+  }
+  #intro .control-row .desc { flex: 1; color: #ccc; }
+  #intro .buttons { display: flex; gap: 10px; margin-top: 6px; }
+  #intro button {
+    border: none;
+    padding: 13px 26px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+  }
+  #intro .btn-start { background: #4ecdc4; color: #0a0a0a; }
+  #intro .btn-stats { background: rgba(255,255,255,0.12); color: #e5e5e5; border: 1px solid rgba(255,255,255,0.2); }
+
   #endscreen {
     position: fixed;
     inset: 0;
@@ -222,8 +282,9 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">V26</div>
+  <div id="version-tag">V27</div>
 </div>
+<div id="intro"></div>
 <div id="endscreen"></div>
 
 <script>
@@ -293,6 +354,7 @@
   const lobToggle = document.getElementById('lobToggle');
   const countdownEl = document.getElementById('countdown');
   const endscreenEl = document.getElementById('endscreen');
+  const introEl = document.getElementById('intro');
 
   // ============================================================
   // PHYSICS / TUNING CONSTANTS
@@ -398,7 +460,7 @@
   // ============================================================
   // GAME STATE MACHINE — countdown between plays, end screen on final
   // ============================================================
-  let gameState = 'countdown'; // 'countdown' | 'playing' | 'goalPause' | 'ended'
+  let gameState = 'intro'; // 'intro' | 'countdown' | 'playing' | 'goalPause' | 'ended'
   let countdownFrames = 0;
   const COUNTDOWN_DURATION = 180; // 3 seconds at 60Hz
   let hitstopFrames = 0; // slow-mo duration after tackles for impact feel
@@ -429,6 +491,8 @@
   let flickResolved = true;
   let flashMsg = null;
   const particles = [];
+  // Visual shockwave rings spawned on tackles — expanding ring with fade
+  const shockwaves = [];
 
   // Smoothed ball position — used by AI for formation/positional targets.
   // Prevents teammates from shuffling on every tiny ball movement. The raw
@@ -1237,8 +1301,13 @@
         p._recentlyGained = 90;
 
         stats[p.team].tackles++;
-        hitstopFrames = 18; // ~0.3s of 50% speed slow-mo (feels smooth, not frozen)
+        hitstopFrames = 10; // shorter slow-mo — visual shockwave carries the impact
         hitstopAltFrame = false;
+
+        // Shockwave at contact point
+        const contactX = (carrier.x + p.x) / 2;
+        const contactY = (carrier.y + p.y) / 2;
+        shockwaves.push({ x: contactX, y: contactY, r: 6, maxR: 70, life: 24, maxLife: 24 });
 
         if (carrier.isUser || p.isUser) {
           flashText(carrier.isUser ? 'TACKLED!' : 'TACKLE!', '#ff9f40');
@@ -1483,6 +1552,30 @@
       p.vy += 0.2; p.vx *= 0.98;
       p.life--;
       if (p.life <= 0) particles.splice(i, 1);
+    }
+    for (let i = shockwaves.length - 1; i >= 0; i--) {
+      const s = shockwaves[i];
+      s.life--;
+      s.r += (s.maxR - s.r) * 0.22;
+      if (s.life <= 0) shockwaves.splice(i, 1);
+    }
+  }
+
+  function drawShockwaves() {
+    for (const s of shockwaves) {
+      const t = s.life / s.maxLife;      // 1 → 0
+      const alpha = t;                    // fade out
+      ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.8})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inner softer ring
+      ctx.strokeStyle = `rgba(255,216,74,${alpha * 0.6})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * 0.55, 0, Math.PI * 2);
+      ctx.stroke();
     }
   }
 
@@ -1822,6 +1915,105 @@
   }
 
   // ============================================================
+  // INTRO / STATS VIEW
+  // ============================================================
+  function showIntro() {
+    gameState = 'intro';
+    const history = loadHistory();
+    const historyCount = history.length;
+    introEl.innerHTML = `
+      <h1>FLICK FOOT</h1>
+      <div class="tagline">4v4 mobile soccer</div>
+
+      <div class="controls">
+        <h3>Controls</h3>
+        <div class="control-row"><span class="icon">LEFT ½</span><span class="desc">Drag to move. Push hard past the edge to sprint (drains stamina).</span></div>
+        <div class="control-row"><span class="icon">RIGHT ½</span><span class="desc">Flick zone — where you pass or shoot.</span></div>
+        <div class="control-row"><span class="icon">SWIPE</span><span class="desc"><b>Forward swipe</b> = pass. Targets the swipe direction, gentle.</span></div>
+        <div class="control-row"><span class="icon">PULL+FLICK</span><span class="desc"><b>Pull back then flick forward</b> = shot. More power. Curved sweeps add spin.</span></div>
+        <div class="control-row"><span class="icon">LOB</span><span class="desc">Tap the LOB button (right edge) to make your next kick a lofted lob.</span></div>
+        <div class="control-row"><span class="icon">BUMP</span><span class="desc">Run into the ball carrier to tackle and steal. Works from any angle.</span></div>
+      </div>
+
+      <div class="controls">
+        <h3>Match</h3>
+        <div class="control-row"><span class="icon">2:00</span><span class="desc">2-minute match. Team with most goals wins.</span></div>
+        <div class="control-row"><span class="icon">KICKOFF</span><span class="desc">After a goal, the conceding team restarts with the ball.</span></div>
+      </div>
+
+      <div class="buttons">
+        <button class="btn-start" id="introStart">START GAME</button>
+        <button class="btn-stats" id="introStats">VIEW STATS ${historyCount ? `(${historyCount})` : ''}</button>
+      </div>
+    `;
+    introEl.classList.add('visible');
+    const startBtn = document.getElementById('introStart');
+    const statsBtn = document.getElementById('introStats');
+    const startHandler = (e) => { if (e) e.preventDefault(); beginMatchFromIntro(); };
+    const statsHandler = (e) => { if (e) e.preventDefault(); showStatsView(); };
+    startBtn.addEventListener('click', startHandler);
+    startBtn.addEventListener('touchstart', startHandler, { passive: false });
+    statsBtn.addEventListener('click', statsHandler);
+    statsBtn.addEventListener('touchstart', statsHandler, { passive: false });
+  }
+
+  function beginMatchFromIntro() {
+    introEl.classList.remove('visible');
+    matchStartTime = performance.now();
+    startCountdown();
+  }
+
+  function showStatsView() {
+    const history = loadHistory();
+    let html = `
+      <h1 style="font-size:22px;color:#e5e5e5;margin-bottom:18px">STATS HISTORY</h1>
+    `;
+    if (history.length === 0) {
+      html += `<div style="color:#777;font-style:italic;margin-bottom:18px">No past matches yet.</div>`;
+    } else {
+      html += `<div class="controls" style="max-width:340px">`;
+      for (const r of history) {
+        const d = new Date(r.ts);
+        const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+                     d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const total = r.home.possessionFrames + r.away.possessionFrames;
+        const hp = total ? Math.round(r.home.possessionFrames / total * 100) : 50;
+        const ap = 100 - hp;
+        const result = r.scoreHome > r.scoreAway ? 'W' : r.scoreHome < r.scoreAway ? 'L' : 'D';
+        const rc = result === 'W' ? '#ffd84a' : result === 'L' ? '#ff6b6b' : '#4ecdc4';
+        html += `
+          <div class="control-row" style="flex-direction:column;align-items:stretch;padding:10px 0">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="color:#888;font-size:12px">${when}</span>
+              <span style="font-weight:800;color:${rc}">${result}</span>
+              <span style="font-variant-numeric:tabular-nums;font-weight:700;font-size:15px">
+                <span style="color:#e63946">${r.scoreHome}</span>&nbsp;–&nbsp;<span style="color:#5a8be8">${r.scoreAway}</span>
+              </span>
+            </div>
+            <div style="font-size:11px;color:#aaa;display:flex;gap:10px;flex-wrap:wrap">
+              <span>Shots <b>${r.home.shots}</b>–<b>${r.away.shots}</b></span>
+              <span>SoG <b>${r.home.shotsOnGoal}</b>–<b>${r.away.shotsOnGoal}</b></span>
+              <span>Tackles <b>${r.home.tackles}</b>–<b>${r.away.tackles}</b></span>
+              <span>Poss <b>${hp}%</b>–<b>${ap}%</b></span>
+            </div>
+          </div>
+        `;
+      }
+      html += `</div>`;
+    }
+    html += `
+      <div class="buttons" style="margin-top:14px">
+        <button class="btn-stats" id="statsBack">BACK</button>
+      </div>
+    `;
+    introEl.innerHTML = html;
+    const backBtn = document.getElementById('statsBack');
+    const backHandler = (e) => { if (e) e.preventDefault(); showIntro(); };
+    backBtn.addEventListener('click', backHandler);
+    backBtn.addEventListener('touchstart', backHandler, { passive: false });
+  }
+
+  // ============================================================
   // MAIN LOOP — fixed 60Hz physics, variable-rate render
   // Prevents high-refresh displays (120Hz+) from running the game at 2x
   // speed, and prevents frame jitter from visibly accelerating the sim.
@@ -1832,7 +2024,7 @@
   let lastFrameTime = null;
 
   function step() {
-    if (gameState === 'ended') return; // frozen after match ends
+    if (gameState === 'ended' || gameState === 'intro') return; // frozen
 
     if (gameState === 'countdown') {
       countdownFrames--;
@@ -1926,6 +2118,7 @@
     for (const p of players) drawPlayer(p);
     drawBall();
     drawParticles();
+    drawShockwaves();
     drawFlash();
     drawTouchControls();
   }
@@ -1948,10 +2141,10 @@
     requestAnimationFrame(loop);
   }
 
-  // Kick it off
+  // Kick it off — show intro first, user starts the match from there
   setupPlayers();
   kickoff();
-  startCountdown();
+  showIntro();
   requestAnimationFrame(loop);
 })();
 </script>
