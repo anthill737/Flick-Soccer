@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.1.3</div>
+  <div id="version-tag">v3.1.4</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -508,7 +508,7 @@
   // ============================================================
   // GAME STATE MACHINE — countdown between plays, end screen on final
   // ============================================================
-  let gameState = 'intro'; // 'intro' | 'countdown' | 'playing' | 'goalPause' | 'ended'
+  let gameState = 'intro'; // 'intro' | 'countdown' | 'kickoff' | 'playing' | 'goalPause' | 'ended'
   let countdownFrames = 0;
   const COUNTDOWN_DURATION = 180; // 3 seconds at 60Hz
   let hitstopFrames = 0; // slow-mo duration after tackles for impact feel
@@ -787,6 +787,7 @@
     ball._isShot = false;
     stats.home.passes++;
     kickoffLock = false; // user has played the ball — lock clears
+    if (gameState === 'kickoff') gameState = 'playing';
     userPlayer.kickAnimT = 0;
     userPlayer.kickAnimDur = 10;
     userPlayer.kickAnimDir = { x: dirX, y: dirY };
@@ -890,6 +891,7 @@
     ball._isShot = true; // user kicks count as shots
     stats.home.shots++;
     kickoffLock = false; // clear once the user has actually played the ball
+    if (gameState === 'kickoff') gameState = 'playing';
     userPlayer.kickAnimT = 0;
     userPlayer.kickAnimDur = 14;
     userPlayer.kickAnimDir = { x: dirX, y: dirY };
@@ -1389,7 +1391,7 @@
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
       const d = Math.hypot(dx, dy);
-      const contactDist = p.r + carrier.r + 9;
+      const contactDist = p.r + carrier.r + 13;
 
       if (d < contactDist) {
         // TACKLE — transfer possession, shove old carrier clear, stun
@@ -1659,6 +1661,8 @@
   }
 
   function kickoff() {
+    // Reset kickoff state each restart so nothing is carried over
+    kickoffLock = false;
     ball.x = W/2;
     ball.y = H/2;
     ball.vx = 0; ball.vy = 0; ball.vz = 0; ball.z = 0;
@@ -2232,15 +2236,22 @@
   function step() {
     if (gameState === 'ended' || gameState === 'intro') return; // frozen
 
+    if (gameState === 'kickoff') {
+      // Everyone frozen — waiting for the kickoff taker to play the ball
+      updateParticles();
+      if (flashMsg) { flashMsg.t++; if (flashMsg.t > 55) flashMsg = null; }
+      return;
+    }
+
     if (gameState === 'countdown') {
       countdownFrames--;
       updateCountdownDisplay();
       if (countdownFrames <= 0) {
-        gameState = 'playing';
+        // Enter 'kickoff' state — everyone stays frozen until the ball
+        // is played. performKickoffPass decides: user taker waits,
+        // AI taker auto-passes and transitions straight to 'playing'.
+        gameState = 'kickoff';
         countdownEl.classList.remove('visible');
-        // Real-soccer kickoff — the possessor MUST pass the ball to
-        // start play. Auto-kick to nearest teammate (applies to user and
-        // AI alike, so neither can just dribble from center).
         performKickoffPass();
       }
       // still animate particles/flash during countdown
@@ -2349,6 +2360,8 @@
     taker.kickAnimT = 0;
     taker.kickAnimDur = 10;
     taker.kickAnimDir = { x: dx/d, y: dy/d };
+    // AI has played the ball — unfreeze the pitch
+    if (gameState === 'kickoff') gameState = 'playing';
   }
 
   function startCountdown() {
