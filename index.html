@@ -142,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V21</div>
+  <div id="version-tag">V22</div>
 </div>
 
 <script>
@@ -232,14 +232,14 @@
   const STAMINA_MIN_TO_SPRINT = 8;
 
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
-  // Ball — has weight but rolls out. Tuned so you can't smoke it the whole
-  // length of the pitch; good shots reach the top third from midfield.
-  const MAX_BALL_PX_PER_FRAME = 10.5;
-  const MIN_SHOT_SPEED = 1.7;
-  const POWER_SCALE = 0.0045;
-  const POWER_BASELINE = 1.85;
-  const LINEAR_DRAG = 0.0085;
-  const QUAD_DRAG = 0.0025;
+  // Ball — realistic weight; hard shots travel meaningfully but don't
+  // pinball around the field. More drag = ball decelerates faster.
+  const MAX_BALL_PX_PER_FRAME = 8.5;
+  const MIN_SHOT_SPEED = 1.5;
+  const POWER_SCALE = 0.0036;
+  const POWER_BASELINE = 1.55;
+  const LINEAR_DRAG = 0.012;
+  const QUAD_DRAG = 0.0038;
 
   const MAX_SPIN = 0.26;
   const MAGNUS_COEFF = 0.022;
@@ -607,6 +607,8 @@
     }
 
     flickResolved = false;
+    ball._lastKicker = userPlayer;
+    ball._kickCooldown = 30;
     userPlayer.kickAnimT = 0;
     userPlayer.kickAnimDur = 14;
     userPlayer.kickAnimDir = { x: dirX, y: dirY };
@@ -914,6 +916,8 @@
       ball.spin = (Math.random() - 0.5) * 0.3;
       p._kickCooldown = 90;
       p._possessionTime = 0;
+      ball._lastKicker = p;
+      ball._kickCooldown = 30;
       flickResolved = false;
       p.kickAnimT = 0; p.kickAnimDur = 14;
       p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -967,6 +971,8 @@
         ball.spin = 0;
         p._kickCooldown = 60;
         p._possessionTime = 0;
+        ball._lastKicker = p;
+        ball._kickCooldown = 30;
         flickResolved = false;
         p.kickAnimT = 0; p.kickAnimDur = 12;
         p.kickAnimDir = { x: ldx/ld, y: ldy/ld };
@@ -1077,6 +1083,9 @@
   function updateBall() {
     if (ball.possessedBy) return;
 
+    // Decrement shooter-pickup-cooldown each frame the ball is in flight
+    if (ball._kickCooldown && ball._kickCooldown > 0) ball._kickCooldown--;
+
     ball.trail.push({ x: ball.x, y: ball.y, z: ball.z });
     if (ball.trail.length > 35) ball.trail.shift();
 
@@ -1116,8 +1125,8 @@
     ball.rotation += ball.spin * 0.4 + newSpeed * 0.08;
 
     // Walls (sides)
-    if (ball.x < ball.r + PITCH_PAD) { ball.x = ball.r + PITCH_PAD; ball.vx *= -0.55; ball.spin *= -0.4; }
-    if (ball.x > W - ball.r - PITCH_PAD) { ball.x = W - ball.r - PITCH_PAD; ball.vx *= -0.55; ball.spin *= -0.4; }
+    if (ball.x < ball.r + PITCH_PAD) { ball.x = ball.r + PITCH_PAD; ball.vx *= -0.4; ball.spin *= -0.4; }
+    if (ball.x > W - ball.r - PITCH_PAD) { ball.x = W - ball.r - PITCH_PAD; ball.vx *= -0.4; ball.spin *= -0.4; }
 
     // Goal detection (both goals)
     if (!flickResolved) {
@@ -1153,11 +1162,11 @@
     // Top/bottom walls (outside goal mouth) - sidelines
     if (ball.y < ball.r + PITCH_PAD) {
       const inGoalMouth = ball.x > goalTopX && ball.x < goalTopX + GOAL_WIDTH;
-      if (!inGoalMouth) { ball.y = ball.r + PITCH_PAD; ball.vy *= -0.55; }
+      if (!inGoalMouth) { ball.y = ball.r + PITCH_PAD; ball.vy *= -0.4; }
     }
     if (ball.y > H - ball.r - PITCH_PAD) {
       const inGoalMouth = ball.x > goalBotX && ball.x < goalBotX + GOAL_WIDTH;
-      if (!inGoalMouth) { ball.y = H - ball.r - PITCH_PAD; ball.vy *= -0.55; }
+      if (!inGoalMouth) { ball.y = H - ball.r - PITCH_PAD; ball.vy *= -0.4; }
     }
 
     // Ball-player collisions (pickup or deflect)
@@ -1174,21 +1183,26 @@
           flashText(p.team === 'home' ? 'KEEPER SAVE' : 'SAVED!', '#ffffff');
           continue;
         }
-        // Other players: pick up if ball slow, deflect if fast
+        // Pickup / deflect logic:
+        //  - If ball is slow enough to trap, anyone picks it up (includes
+        //    passes in flight, not just settled balls) — but the shooter
+        //    has a brief cooldown so they don't immediately recapture.
+        //  - Faster balls that are still in flight deflect.
         const ballSpeed = Math.hypot(ball.vx, ball.vy);
-        if (ballSpeed < 8.0 && flickResolved) {
+        const isShooterCooldown = ball._lastKicker === p && (ball._kickCooldown || 0) > 0;
+        if (ballSpeed < 5.5 && !isShooterCooldown) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
-          if (p === userPlayer) flickResolved = true;
+          flickResolved = true;
           break;
         } else if (!flickResolved) {
           const nx = ddx / ddist, ny = ddy / ddist;
           const dot = ball.vx * nx + ball.vy * ny;
           ball.vx -= 2 * dot * nx;
           ball.vy -= 2 * dot * ny;
-          ball.vx *= 0.55; ball.vy *= 0.55;
+          ball.vx *= 0.4; ball.vy *= 0.4; // kill more energy on deflect
           p.stunned = 30;
-          if (p.team !== userPlayer.team && !flickResolved) flashText('BLOCKED', '#ff9f40');
+          if (p.team !== userPlayer.team) flashText('BLOCKED', '#ff9f40');
         }
       }
     }
