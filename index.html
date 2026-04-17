@@ -193,7 +193,7 @@
   const ctx = canvas.getContext('2d');
 
   // Game logical dimensions — we render to fit screen
-  let W = 900, H = 520;
+  let W = 1100, H = 640;
   let canvasScale = 1;
 
   function resizeCanvas() {
@@ -201,7 +201,7 @@
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // Fit 900x520 aspect into screen
+    // Fit 1100x640 aspect into screen
     const aspect = W / H;
     let displayW, displayH;
     if (vw / vh > aspect) {
@@ -238,15 +238,15 @@
   // ============================================================
   // PHYSICS / TUNING CONSTANTS
   // ============================================================
-  const GOAL_WIDTH = 180, GOAL_DEPTH = 20;
-  const PITCH_PAD = 14;
+  const GOAL_WIDTH = 220, GOAL_DEPTH = 22;
+  const PITCH_PAD = 16;
   const goalTopX = W/2 - GOAL_WIDTH/2;
   const goalTopY = 6;
   const goalBotX = W/2 - GOAL_WIDTH/2;
   const goalBotY = H - 6 - GOAL_DEPTH;
 
-  const PLAYER_WALK_MAX = 1.9;
-  const PLAYER_SPRINT_MAX = 3.2;
+  const PLAYER_WALK_MAX = 2.1;
+  const PLAYER_SPRINT_MAX = 3.5;
   const PLAYER_ACCEL = 0.22;
   const PLAYER_DECEL = 0.14;
 
@@ -255,24 +255,25 @@
   const STAMINA_REGEN = 0.25;
   const STAMINA_MIN_TO_SPRINT = 8;
 
-  const MAX_BALL_PX_PER_FRAME = 11;
-  const MIN_SHOT_SPEED = 1.8;
-  const POWER_SCALE = 0.0055;
-  const POWER_BASELINE = 2.2;
-  const LINEAR_DRAG = 0.005;
-  const QUAD_DRAG = 0.001;
+  // Ball — more grounded: lower peak speed, more drag, spin decays faster
+  const MAX_BALL_PX_PER_FRAME = 9.5;
+  const MIN_SHOT_SPEED = 1.6;
+  const POWER_SCALE = 0.0042;
+  const POWER_BASELINE = 1.8;
+  const LINEAR_DRAG = 0.012;    // was 0.005 — more rolling resistance
+  const QUAD_DRAG = 0.0025;     // was 0.001 — air resistance scales faster with speed
 
-  const MAX_SPIN = 0.3;
-  const MAGNUS_COEFF = 0.028;
-  const SPIN_DECAY = 0.991;
+  const MAX_SPIN = 0.28;
+  const MAGNUS_COEFF = 0.024;
+  const SPIN_DECAY = 0.985;     // was 0.991 — spin bleeds off sooner for grounded feel
 
-  const GRAVITY = 0.22;
+  const GRAVITY = 0.28;         // was 0.22 — ball falls faster, arcs tighter
   const LOB_LAUNCH_MULT = 0.7;
 
-  const DRIBBLE_OFFSET = 18;
+  const DRIBBLE_OFFSET = 20;
   const DRIBBLE_SPRING = 0.28;
   const DRIBBLE_DAMPING = 0.72;
-  const POSSESSION_RADIUS = 40;
+  const POSSESSION_RADIUS = 42;
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -305,8 +306,8 @@
     players = [];
     // HOME (red, attacks up)
     players.push(createPlayer('home', 'keeper', W/2, H - 30));
-    players.push(createPlayer('home', 'defender', W/2 - 110, H * 0.68));
-    players.push(createPlayer('home', 'defender', W/2 + 110, H * 0.68));
+    players.push(createPlayer('home', 'defender', W/2 - 150, H * 0.68));
+    players.push(createPlayer('home', 'defender', W/2 + 150, H * 0.68));
     const user = createPlayer('home', 'striker', W/2, H * 0.55);
     user.isUser = true;
     players.push(user);
@@ -314,8 +315,8 @@
 
     // AWAY (blue, attacks down)
     players.push(createPlayer('away', 'keeper', W/2, 30));
-    players.push(createPlayer('away', 'defender', W/2 - 110, H * 0.32));
-    players.push(createPlayer('away', 'defender', W/2 + 110, H * 0.32));
+    players.push(createPlayer('away', 'defender', W/2 - 150, H * 0.32));
+    players.push(createPlayer('away', 'defender', W/2 + 150, H * 0.32));
     players.push(createPlayer('away', 'striker', W/2, H * 0.45));
   }
 
@@ -1081,14 +1082,14 @@
     // Halfway line
     ctx.beginPath(); ctx.moveTo(PITCH_PAD, H/2); ctx.lineTo(W - PITCH_PAD, H/2); ctx.stroke();
     // Center circle
-    ctx.beginPath(); ctx.arc(W/2, H/2, 55, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W/2, H/2, 70, 0, Math.PI*2); ctx.stroke();
     ctx.beginPath(); ctx.arc(W/2, H/2, 3, 0, Math.PI*2);
     ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
     // Penalty boxes (top & bottom)
-    ctx.strokeRect(W/2 - 160, PITCH_PAD, 320, 90);
-    ctx.strokeRect(W/2 - 160, H - PITCH_PAD - 90, 320, 90);
-    ctx.strokeRect(W/2 - 90, PITCH_PAD, 180, 40);
-    ctx.strokeRect(W/2 - 90, H - PITCH_PAD - 40, 180, 40);
+    ctx.strokeRect(W/2 - 200, PITCH_PAD, 400, 110);
+    ctx.strokeRect(W/2 - 200, H - PITCH_PAD - 110, 400, 110);
+    ctx.strokeRect(W/2 - 115, PITCH_PAD, 230, 48);
+    ctx.strokeRect(W/2 - 115, H - PITCH_PAD - 48, 230, 48);
     // Goals
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fillRect(goalTopX, goalTopY, GOAL_WIDTH, GOAL_DEPTH);
