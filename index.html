@@ -245,29 +245,29 @@
   const goalBotX = W/2 - GOAL_WIDTH/2;
   const goalBotY = H - 6 - GOAL_DEPTH;
 
-  const PLAYER_WALK_MAX = 1.55;
-  const PLAYER_SPRINT_MAX = 2.55;
-  const PLAYER_ACCEL = 0.15;
-  const PLAYER_DECEL = 0.12;
+  const PLAYER_WALK_MAX = 0.95;
+  const PLAYER_SPRINT_MAX = 1.55;
+  const PLAYER_ACCEL = 0.09;
+  const PLAYER_DECEL = 0.08;
 
   const STAMINA_MAX = 100;
   const STAMINA_DRAIN = 0.32;
   const STAMINA_REGEN = 0.35;
   const STAMINA_MIN_TO_SPRINT = 8;
 
-  // Ball — grounded: lower peak speed, more drag, spin decays fast
-  const MAX_BALL_PX_PER_FRAME = 7.5;
-  const MIN_SHOT_SPEED = 1.4;
-  const POWER_SCALE = 0.0034;
-  const POWER_BASELINE = 1.6;
-  const LINEAR_DRAG = 0.018;
-  const QUAD_DRAG = 0.004;
+  // Ball — grounded: lower peak speed, moderate drag, spin decays fast
+  const MAX_BALL_PX_PER_FRAME = 4.5;
+  const MIN_SHOT_SPEED = 0.85;
+  const POWER_SCALE = 0.002;
+  const POWER_BASELINE = 1.0;
+  const LINEAR_DRAG = 0.011;
+  const QUAD_DRAG = 0.003;
 
   const MAX_SPIN = 0.26;
   const MAGNUS_COEFF = 0.022;
   const SPIN_DECAY = 0.982;
 
-  const GRAVITY = 0.32;
+  const GRAVITY = 0.19;
   const LOB_LAUNCH_MULT = 0.7;
 
   const DRIBBLE_OFFSET = 20;
@@ -776,8 +776,8 @@
       tvy = (dy / d) * speedLimit;
     }
 
-    p.vx += (tvx - p.vx) * 0.13;
-    p.vy += (tvy - p.vy) * 0.13;
+    p.vx += (tvx - p.vx) * 0.08;
+    p.vy += (tvy - p.vy) * 0.08;
     p.x += p.vx;
     p.y += p.vy;
 
@@ -815,7 +815,7 @@
       const ty = goalY;
       const dx = tx - p.x, dy = ty - p.y;
       const d = Math.hypot(dx, dy);
-      const power = 5.5 + Math.random() * 1.5;
+      const power = 3.3 + Math.random() * 0.9;
       ball.possessedBy = null;
       ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
       ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
@@ -823,7 +823,7 @@
       ball.vy = (dy/d) * power;
       ball.vz = 0; ball.z = 0;
       ball.spin = (Math.random() - 0.5) * 0.3;
-      p._kickCooldown = 70;
+      p._kickCooldown = 100;
       flickResolved = false;
       p.kickAnimT = 0; p.kickAnimDur = 14;
       p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -844,7 +844,7 @@
       if (bestMate) {
         const dx = bestMate.x - p.x, dy = bestMate.y - p.y;
         const d = Math.hypot(dx, dy);
-        const power = Math.min(5.5, 2.5 + d * 0.012);
+        const power = Math.min(3.3, 1.5 + d * 0.007);
         ball.possessedBy = null;
         ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
         ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
@@ -852,7 +852,7 @@
         ball.vy = (dy/d) * power;
         ball.vz = 0; ball.z = 0;
         ball.spin = 0;
-        p._kickCooldown = 45;
+        p._kickCooldown = 70;
         flickResolved = false;
         p.kickAnimT = 0; p.kickAnimDur = 12;
         p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -992,7 +992,7 @@
         }
         // Other players: pick up if ball slow, deflect if fast
         const ballSpeed = Math.hypot(ball.vx, ball.vy);
-        if (ballSpeed < 4 && flickResolved) {
+        if (ballSpeed < 2.5 && flickResolved) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
           if (p === userPlayer) flickResolved = true;
