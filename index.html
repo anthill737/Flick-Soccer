@@ -59,15 +59,26 @@
     pointer-events: auto;
   }
   #lobToggle {
-    background: rgba(0,0,0,0.5);
-    padding: 6px 12px;
-    border-radius: 20px;
-    font-size: 13px;
+    background: rgba(0,0,0,0.6);
+    padding: 12px 22px;
+    border-radius: 26px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 1px;
     color: white;
-    border: 1px solid rgba(255,255,255,0.2);
+    border: 2px solid rgba(255,255,255,0.25);
     pointer-events: auto;
+    min-width: 78px;
+    min-height: 46px;
+    /* Invisible extra tap area so fingers that land nearby still register */
+    position: relative;
   }
-  #lobToggle.on { background: #ffd84a; color: #4a3800; border-color: #ffd84a; }
+  #lobToggle::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
+  }
+  #lobToggle.on { background: #ffd84a; color: #4a3800; border-color: #ffd84a; box-shadow: 0 0 14px rgba(255,216,74,0.6); }
   #version-tag {
     position: fixed;
     bottom: 6px;
@@ -131,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V12</div>
+  <div id="version-tag">V13</div>
 </div>
 
 <script>
@@ -233,7 +244,7 @@
   const SPIN_DECAY = 0.982;
 
   const GRAVITY = 0.43;
-  const LOB_LAUNCH_MULT = 0.7;
+  const LOB_LAUNCH_MULT = 0.76; // horizontal velocity mult for lobs — +8% distance vs 0.7
 
   const DRIBBLE_OFFSET = 20;
   const DRIBBLE_SPRING = 0.28;
@@ -719,18 +730,17 @@
         if (md < distToBall) teammatesCloserToBall++;
       }
 
-      // BALL-FIRST override — active participation in play. A teammate will
-      // leave formation to go for the ball when any of these are true:
-      //   - ball is loose and I'm among the 2 closest teammates
-      //   - opponent carries ball and I'm within 200 units (double-team)
-      //   - ball is bouncing slowly nearby (< 130 units) regardless of carrier
+      // BALL-FIRST override — active participation. Only ONE teammate leaves
+      // formation at a time (previously up to 2 + anyone within 130, which
+      // caused all three outfielders to stack on the ball).
       let engageBall = false;
       if (!ballCarrier) {
-        if (teammatesCloserToBall <= 1) engageBall = true;
+        // Loose ball: only the single closest teammate chases
+        if (teammatesCloserToBall === 0) engageBall = true;
       } else if (ballCarrier.team !== p.team) {
-        if (distToBall < 200 && teammatesCloserToBall <= 1) engageBall = true;
+        // Opponent has ball: only the closest pressures, within 220 units
+        if (teammatesCloserToBall === 0 && distToBall < 220) engageBall = true;
       }
-      if (distToBall < 130) engageBall = true;
 
       if (engageBall) {
         // Lead the ball slightly — run to where it will be, not where it is
@@ -767,16 +777,17 @@
       p._engaging = engageBall;
     }
 
-    // Separation — avoid clumping with same-team players
+    // Separation — avoid clumping with same-team players. Larger radius +
+    // stronger force so teammates don't stack on each other.
     let sepX = 0, sepY = 0;
     for (const other of players) {
       if (other === p) continue;
       if (other.team !== p.team) continue;
       const dx = p.x - other.x, dy = p.y - other.y;
       const d = Math.hypot(dx, dy);
-      if (d < 50 && d > 0.01) {
-        sepX += (dx / d) * (50 - d) * 0.05;
-        sepY += (dy / d) * (50 - d) * 0.05;
+      if (d < 68 && d > 0.01) {
+        sepX += (dx / d) * (68 - d) * 0.1;
+        sepY += (dy / d) * (68 - d) * 0.1;
       }
     }
 
