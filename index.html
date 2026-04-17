@@ -284,7 +284,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.1.0</div>
+  <div id="version-tag">v3.1.1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -467,6 +467,7 @@
   const COUNTDOWN_DURATION = 180; // 3 seconds at 60Hz
   let hitstopFrames = 0; // slow-mo duration after tackles for impact feel
   let hitstopAltFrame = false; // toggles each step during hitstop — skip=50% speed
+  let kickoffLock = false; // while true, user's first kick must be lateral or back
 
   // Per-match stats
   function emptyTeamStats() {
@@ -716,6 +717,11 @@
   // without a preceding pullback. Always ground-level (ignores lobMode).
   function executePass(dirX, dirY, swingDist, dt) {
     if (ball.possessedBy !== userPlayer) return;
+    // Kickoff lock — no forward passes either
+    if (kickoffLock && dirY < -0.3) {
+      flashText('SIDEWAYS OR BACK', '#ff9f40');
+      return;
+    }
     const swingSpeed = swingDist / dt;
     // Moderate power, capped well under shot maximum
     const power = Math.min(5.2, 1.6 + swingSpeed * 0.0025);
@@ -734,6 +740,7 @@
     ball._kickCooldown = 30;
     ball._isShot = false;
     stats.home.passes++;
+    kickoffLock = false; // user has played the ball — lock clears
     userPlayer.kickAnimT = 0;
     userPlayer.kickAnimDur = 10;
     userPlayer.kickAnimDir = { x: dirX, y: dirY };
@@ -783,6 +790,12 @@
     const dirX = dVecX / dVecM;
     const dirY = dVecY / dVecM;
 
+    // Kickoff lock — can't kick forward (home attacks up, so dirY < -0.3 = forward)
+    if (kickoffLock && dirY < -0.3) {
+      flashText('SIDEWAYS OR BACK', '#ff9f40');
+      return;
+    }
+
     const swingDist = Math.hypot(last.x - first.x, last.y - first.y);
     const swingSpeedPerSec = swingDist / dt;
     if (swingDist < 8 || swingSpeedPerSec < 60) return;
@@ -830,6 +843,7 @@
     ball._kickCooldown = 30;
     ball._isShot = true; // user kicks count as shots
     stats.home.shots++;
+    kickoffLock = false; // clear once the user has actually played the ball
     userPlayer.kickAnimT = 0;
     userPlayer.kickAnimDur = 14;
     userPlayer.kickAnimDir = { x: dirX, y: dirY };
@@ -2212,18 +2226,36 @@
     if (ball.possessedBy) stats[ball.possessedBy.team].possessionFrames++;
   }
 
-  // Kickoff pass — real soccer rule: the taker must play the ball to a
-  // teammate to start play. Called right when countdown hits GO. Applies
-  // to the user and the AI alike so no one just dribbles out of the centre.
+  // Kickoff — real soccer rule: the first kick can't go forward (toward
+  // the opposing goal). USER takes their own kickoff; we just flag the
+  // lock so any forward flick is rejected. AI auto-passes to a teammate
+  // that's level or behind the taker.
   function performKickoffPass() {
     const taker = ball.possessedBy;
     if (!taker) return;
-    // Pick nearest teammate (non-keeper) as the pass target
+    if (taker.isUser) {
+      // Lock in: user must play the ball sideways or back themselves
+      kickoffLock = true;
+      flashText('SIDEWAYS OR BACK', '#ffd84a');
+      return;
+    }
+    // AI kickoff: auto-pass to nearest teammate that isn't forward of taker
+    const isHomeTeam = taker.team === 'home';
+    const aheadOfTaker = (m) => isHomeTeam ? (m.y < taker.y - 20) : (m.y > taker.y + 20);
     let target = null, tdist = Infinity;
     for (const mate of players) {
       if (mate === taker || mate.team !== taker.team || mate.role === 'keeper') continue;
+      if (aheadOfTaker(mate)) continue; // skip forward teammates
       const d = Math.hypot(mate.x - taker.x, mate.y - taker.y);
       if (d < tdist) { tdist = d; target = mate; }
+    }
+    // Fallback to any teammate if none non-forward exists
+    if (!target) {
+      for (const mate of players) {
+        if (mate === taker || mate.team !== taker.team || mate.role === 'keeper') continue;
+        const d = Math.hypot(mate.x - taker.x, mate.y - taker.y);
+        if (d < tdist) { tdist = d; target = mate; }
+      }
     }
     if (!target) return;
     const dx = target.x - taker.x, dy = target.y - taker.y;
