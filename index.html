@@ -23,21 +23,7 @@
     overscroll-behavior: none;
   }
   #app { width: 100vw; height: 100vh; position: relative; overflow: hidden; }
-  /* Canvas sized purely by CSS — viewport units + aspect-ratio. Centered.
-     This avoids any reliance on JS to compute display size (which was
-     failing on some Android setups, leaving the canvas at default 300x150). */
-  canvas {
-    display: block;
-    background: #4a8f3c;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    aspect-ratio: 720 / 1280;
-    width: min(100vw, calc(100dvh * 720 / 1280));
-    height: min(100dvh, calc(100vw * 1280 / 720));
-    /* dvh fallback — older browsers ignore dvh and use vh from above */
-  }
+  canvas { display: block; background: #4a8f3c; position: absolute; top: 0; left: 0; }
 
   /* HUD */
   #hud {
@@ -156,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V17</div>
+  <div id="version-tag">V18</div>
 </div>
 
 <script>
@@ -185,13 +171,24 @@
   let canvasScaleX = 1, canvasScaleY = 1;
 
   function resizeCanvas() {
-    // Read the canvas's CSS-rendered size (set by aspect-ratio + viewport
-    // units in the stylesheet) and match the internal pixel buffer to it.
-    // Cap DPR at 2 to avoid hitting mobile browser canvas-size limits.
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const rect = canvas.getBoundingClientRect();
-    const displayW = rect.width || W;   // fall back to logical W if 0
-    const displayH = rect.height || H;
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    const aspect = W / H;
+
+    let displayW, displayH;
+    if (vw / vh > aspect) {
+      displayH = vh;
+      displayW = vh * aspect;
+    } else {
+      displayW = vw;
+      displayH = vw / aspect;
+    }
+
+    canvas.style.width = displayW + 'px';
+    canvas.style.height = displayH + 'px';
+    canvas.style.left = ((vw - displayW) / 2) + 'px';
+    canvas.style.top = ((vh - displayH) / 2) + 'px';
 
     canvas.width = Math.max(1, Math.round(displayW * dpr));
     canvas.height = Math.max(1, Math.round(displayH * dpr));
@@ -203,13 +200,8 @@
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
   resizeCanvas();
-  // Handle Chrome's dynamic URL bar that retracts after first interaction
   setTimeout(resizeCanvas, 250);
   setTimeout(resizeCanvas, 1000);
-  // Also observe the canvas itself in case CSS recomputes its size
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(resizeCanvas).observe(canvas);
-  }
 
   // ============================================================
   // HUD
