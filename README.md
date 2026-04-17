@@ -1,30 +1,10 @@
 # Flick Foot Soccer
 
-A mobile-first soccer game where your mouse/thumb is your kicking foot. Pull back, sweep forward to curve shots like real soccer physics.
-
-## Play
-
-Open the live version on your phone: **https://anthill737.github.io/flick-soccer/**
-
-Rotate to landscape. In Chrome, tap the three-dot menu → "Add to Home screen" for an app-like experience.
+A mobile-first soccer game playable in the browser. Live at: **https://anthill737.github.io/flick-soccer/**
 
 ## Controls
 
-**Mobile:**
-- Left side of screen: drag to spawn a virtual joystick, move to walk
-- Push the joystick past ~75% of its reach for sprint (yellow ring appears)
-- Right side of screen: pull back, then sweep forward in an arc to kick
-- Curved sweep = curved ball (Magnus effect)
-- LOB button top-right toggles chip shots over the keeper
-
-**Desktop:**
-- `WASD` to dribble
-- `Shift` to sprint
-- `Space` or right-click to toggle lob
-- Hold mouse, pull back, sweep forward, release to kick
-
-## Format
-
-- 4v4 (1 keeper + 2 defenders + 1 striker per side)
-- You play #10 (yellow ring around you)
-- 2-minute matches
+- **Move:** `WASD` (desktop) or the virtual joystick (mobile — drag anywhere on the left side of the screen)
+- **Sprint:** `Shift` (desktop) or push the joystick hard past ~75% of its reach (mobile)
+- **Shoot:** pull back and flick with the mouse (desktop) or your right thumb (mobile) — curved sweeps curve the ball
+- **Chip / lob:** `Space` (desktop) or the `LOB` button top-right (mobile)
