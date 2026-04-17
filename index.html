@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.3.0</div>
+  <div id="version-tag">v3.3.1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1300,7 +1300,10 @@
     // eagerly (prevents repeated tackle-pong between teams).
     // Lower pass frequency so AI dribbles / carries more. Hot-potato
     // still kicks in briefly after winning the ball.
-    const passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
+    // Pass frequency — keepers distribute quickly so the team doesn't
+    // get pinned deep in their own box.
+    let passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
+    if (p.role === 'keeper') passProb = 0.35;
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
     const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.68) : (p.y < H * 0.32);
@@ -1327,10 +1330,16 @@
         const distPenalty = Math.hypot(mate.x - p.x, mate.y - p.y) * 0.15;
 
         let score;
-        if (carrierInOwnThird) {
+        if (p.role === 'keeper') {
+          // Keeper distribution — long ball up the pitch to the most
+          // open forward teammate. Heavily reward forward progress AND
+          // openness; ignore distance penalty (keeper punts far).
+          score = (ahead >= 0 ? ahead * 1.0 : -200) + openness * 1.8;
+          if (mate.role === 'striker') score += 30;
+          if (lateralDist > 180) score += 10; // slight wing preference
+        } else if (carrierInOwnThird) {
           // Defensive-third play: value openness strongly, tolerate all
-          // directions (back, lateral, forward). Reward a backpass /
-          // cross to an open teammate.
+          // directions (back, lateral, forward).
           score = openness * 1.5 - distPenalty * 0.7;
           if (mate.role === 'keeper') score += 25; // safety outlet
           if (ahead < 0) score += 15;              // backpass bonus
@@ -1378,14 +1387,20 @@
 
         // Defensive-third carriers accept slightly less-open teammates —
         // a safe backpass beats forcing forward play from under pressure.
+        // Keeper distribution: only needs the receiver to be reasonably free.
         let minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 50 : 75;
         if (carrierInOwnThird) minOpen = 45;
+        if (p.role === 'keeper') minOpen = 40;
         if (!laneBlocked && targetOpen >= minOpen) {
           const leadX = bestMate.vx * 8;
           const leadY = bestMate.vy * 8;
           const ldx = dx + leadX, ldy = dy + leadY;
           const ld = Math.hypot(ldx, ldy);
-          const power = Math.min(6.0, 2.6 + d * 0.012);
+          // Keepers punt harder so the ball clears midfield
+          const maxP = p.role === 'keeper' ? 8.0 : 6.0;
+          const basP = p.role === 'keeper' ? 3.5 : 2.6;
+          const sloP = p.role === 'keeper' ? 0.018 : 0.012;
+          const power = Math.min(maxP, basP + d * sloP);
           ball.possessedBy = null;
           ball.x = p.x + (ldx/ld) * (p.r + ball.r + 2);
           ball.y = p.y + (ldy/ld) * (p.r + ball.r + 2);
@@ -1529,7 +1544,16 @@
   }
 
   function updateBall() {
-    if (ball.possessedBy) return;
+    if (ball.possessedBy) {
+      // Keep last-known position synced during dribble so swept test is
+      // accurate if possession is lost mid-frame
+      ball._lastX = ball.x; ball._lastY = ball.y;
+      return;
+    }
+
+    // Record the pre-step position for the swept ball-player collision
+    ball._lastX = ball.x;
+    ball._lastY = ball.y;
 
     // Decrement shooter-pickup-cooldown each frame the ball is in flight
     if (ball._kickCooldown && ball._kickCooldown > 0) ball._kickCooldown--;
@@ -1655,10 +1679,26 @@
     }
 
     // Ball-player collisions (pickup or deflect)
+    // Swept test — check the line from the ball's last position to its
+    // current position against each player's radius. Catches tunneling
+    // on fast shots AND extends a small forgiveness margin so balls
+    // don't skim past defenders.
+    const lastBX = ball._lastX !== undefined ? ball._lastX : ball.x;
+    const lastBY = ball._lastY !== undefined ? ball._lastY : ball.y;
     for (const p of players) {
       const ddx = ball.x - p.x, ddy = ball.y - p.y;
-      const ddist = Math.hypot(ddx, ddy);
-      if (ddist < p.r + ball.r && ball.z < 18) {
+      const curDist = Math.hypot(ddx, ddy);
+      // Swept-line closest distance from ball path (last -> current) to player
+      const segX = ball.x - lastBX, segY = ball.y - lastBY;
+      const segLen2 = segX*segX + segY*segY;
+      let sweptDist = curDist;
+      if (segLen2 > 0.01) {
+        const t = Math.max(0, Math.min(1, ((p.x - lastBX) * segX + (p.y - lastBY) * segY) / segLen2));
+        const cx = lastBX + segX * t, cy = lastBY + segY * t;
+        sweptDist = Math.hypot(p.x - cx, p.y - cy);
+      }
+      const ddist = Math.min(curDist, sweptDist);
+      if (ddist < p.r + ball.r + 2 && ball.z < 18) {
         if (p.role === 'keeper' && !flickResolved) {
           // Keeper catches — credit the shot as on-target to the shooting team
           if (ball._isShot && ball._lastKicker && ball._lastKicker.team !== p.team) {
