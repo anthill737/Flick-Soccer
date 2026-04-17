@@ -1,6 +1,6 @@
 # Flick Foot Soccer
 
-A mobile-first soccer game playable in the browser. Live at: **https://anthill737.github.io/flick-soccer/**
+A mobile-first soccer game playable in the browser. Live at: **https://anthill737.github.io/Flick-Soccer/**
 
 ## Controls
 
