@@ -59,26 +59,37 @@
     pointer-events: auto;
   }
   #lobToggle {
+    position: fixed;
+    right: 14px;
+    bottom: 22%; /* near thumb rest — above the natural flick zone */
+    width: 72px;
+    height: 72px;
+    padding: 0;
+    border-radius: 50%;
     background: rgba(0,0,0,0.6);
-    padding: 12px 22px;
-    border-radius: 26px;
-    font-size: 16px;
-    font-weight: 700;
-    letter-spacing: 1px;
     color: white;
-    border: 2px solid rgba(255,255,255,0.25);
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border: 2px solid rgba(255,255,255,0.3);
     pointer-events: auto;
-    min-width: 78px;
-    min-height: 46px;
-    /* Invisible extra tap area so fingers that land nearby still register */
-    position: relative;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
+  /* Generous invisible tap halo so near-misses register */
   #lobToggle::before {
     content: '';
     position: absolute;
-    inset: -14px;
+    inset: -20px;
   }
-  #lobToggle.on { background: #ffd84a; color: #4a3800; border-color: #ffd84a; box-shadow: 0 0 14px rgba(255,216,74,0.6); }
+  #lobToggle.on {
+    background: #ffd84a;
+    color: #4a3800;
+    border-color: #ffd84a;
+    box-shadow: 0 0 18px rgba(255,216,74,0.7);
+  }
   /* Countdown overlay */
   #countdown {
     position: fixed;
@@ -208,10 +219,10 @@
       <span class="away"><span id="scoreAway">0</span> AWAY</span>
     </div>
     <div id="timer">02:00</div>
-    <button id="lobToggle">LOB</button>
   </div>
+  <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">V23</div>
+  <div id="version-tag">V24</div>
 </div>
 <div id="endscreen"></div>
 
@@ -293,9 +304,9 @@
   const goalBotX = W/2 - GOAL_WIDTH/2;
   const goalBotY = H - 6 - GOAL_DEPTH;
 
-  const PLAYER_WALK_MAX = 2.2;
-  const PLAYER_SPRINT_MAX = 3.52;
-  const PLAYER_ACCEL = 0.19;
+  const PLAYER_WALK_MAX = 2.02;
+  const PLAYER_SPRINT_MAX = 3.24;
+  const PLAYER_ACCEL = 0.175;
   const PLAYER_DECEL = 0.18;
 
   const STAMINA_MAX = 100;
@@ -317,8 +328,8 @@
   const MAGNUS_COEFF = 0.022;
   const SPIN_DECAY = 0.982;
 
-  const GRAVITY = 0.43;
-  const LOB_LAUNCH_MULT = 0.76; // horizontal velocity mult for lobs — +8% distance vs 0.7
+  const GRAVITY = 0.36;
+  const LOB_LAUNCH_MULT = 0.9; // horizontal velocity mult for lobs — soars farther
 
   const DRIBBLE_OFFSET = 20;
   const DRIBBLE_SPRING = 0.28;
@@ -390,6 +401,7 @@
   let gameState = 'countdown'; // 'countdown' | 'playing' | 'goalPause' | 'ended'
   let countdownFrames = 0;
   const COUNTDOWN_DURATION = 180; // 3 seconds at 60Hz
+  let hitstopFrames = 0; // short freeze after tackles for impact feel
 
   // Per-match stats
   function emptyTeamStats() {
@@ -611,7 +623,19 @@
 
   function resolveFlick() {
     if (input.flickState === 'forward' && input.flickForwardPath.length >= 2) {
+      // Pullback + sweep forward = SHOT (powerful)
       executeKick();
+    } else if (input.flickState === 'pullback' && input.flickPressStart && input.flickPullbackPath.length > 0) {
+      // Simple forward swipe (no pullback) = PASS (gentler, directional)
+      const first = input.flickPressStart;
+      const last = input.flickPullbackPath[input.flickPullbackPath.length - 1];
+      const dx = last.x - first.x;
+      const dy = last.y - first.y;
+      const dist = Math.hypot(dx, dy);
+      const dt = (last.t - first.t) / 1000;
+      if (dist > 16 && dt > 0.02) {
+        executePass(dx / dist, dy / dist, dist, dt);
+      }
     }
     input.flickState = 'idle';
     input.flickPressStart = null;
@@ -619,6 +643,34 @@
     input.flickForwardPath = [];
     input.flickPullbackApex = null;
     input.flickPullbackDir = null;
+  }
+
+  // PASS — gentler, targetable kick; used when the player flicks forward
+  // without a preceding pullback. Always ground-level (ignores lobMode).
+  function executePass(dirX, dirY, swingDist, dt) {
+    if (ball.possessedBy !== userPlayer) return;
+    const swingSpeed = swingDist / dt;
+    // Moderate power, capped well under shot maximum
+    const power = Math.min(5.2, 1.6 + swingSpeed * 0.0025);
+    if (power < 1.4) return;
+
+    ball.possessedBy = null;
+    ball.x = userPlayer.x + dirX * (userPlayer.r + ball.r + 2);
+    ball.y = userPlayer.y + dirY * (userPlayer.r + ball.r + 2);
+    ball.vx = dirX * power;
+    ball.vy = dirY * power;
+    ball.vz = 0; ball.z = 0;
+    ball.spin = 0;
+
+    flickResolved = false;
+    ball._lastKicker = userPlayer;
+    ball._kickCooldown = 30;
+    ball._isShot = false;
+    stats.home.passes++;
+    userPlayer.kickAnimT = 0;
+    userPlayer.kickAnimDur = 10;
+    userPlayer.kickAnimDir = { x: dirX, y: dirY };
+    userPlayer.facing = Math.atan2(dirY, dirX);
   }
 
   // ============================================================
@@ -1146,6 +1198,7 @@
         p._kickCooldown = 0;
 
         stats[p.team].tackles++;
+        hitstopFrames = 6; // ~0.1s freeze — "coyote-time" impact punch
 
         if (carrier.isUser || p.isUser) {
           flashText(carrier.isUser ? 'TACKLED!' : 'TACKLE!', '#ff9f40');
@@ -1203,8 +1256,8 @@
       if (ball.z <= 0) {
         ball.z = 0;
         ball.vz = -ball.vz * 0.35;
-        ball.vx *= 0.75;
-        ball.vy *= 0.75;
+        ball.vx *= 0.9;
+        ball.vy *= 0.9;
         if (Math.abs(ball.vz) < 0.4) ball.vz = 0;
       }
     }
@@ -1773,6 +1826,15 @@
 
     // playing
     updateTimer();
+
+    // Hitstop — brief freeze right after a tackle, so the impact reads
+    if (hitstopFrames > 0) {
+      hitstopFrames--;
+      updateParticles();
+      if (flashMsg) { flashMsg.t++; if (flashMsg.t > 55) flashMsg = null; }
+      return;
+    }
+
     smoothedBall.x += (ball.x - smoothedBall.x) * BALL_SMOOTH;
     smoothedBall.y += (ball.y - smoothedBall.y) * BALL_SMOOTH;
     updateUserPlayer();
