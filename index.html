@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.3.2</div>
+  <div id="version-tag">v3.4.0</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1121,16 +1121,23 @@
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
       } else if (ballRank === 0) {
-        // CLOSEST: close down the ball, leading by its velocity
-        tx = ball.x + ball.vx * 6;
-        ty = ball.y + ball.vy * 6;
+        // PRESS — close down the carrier but stop GOAL-SIDE of the ball,
+        // not on top of it. This mirrors how a real defender approaches:
+        // they cut off the angle to goal and force the carrier sideways
+        // or backwards. Tackles only happen when the carrier dribbles
+        // INTO this pressing position; the AI doesn't try to body-block.
+        const goalSideY = isHomeTeam ? 36 : -36;  // away from ball toward own goal
+        // Anticipate ball drift: blend in a small velocity lead but
+        // keep most weight on actual position so we settle into a press.
+        tx = ball.x + ball.vx * 2;
+        ty = ball.y + ball.vy * 2 + goalSideY;
       } else if (ballRank === 1) {
-        // Rank 1 always positions for support/cover — never sprint-chases.
-        // Further back than before so they don't tangle with rank 0.
+        // COVER — second defender sits deeper and to the WEAK side
+        // (opposite of the presser) to seal pass lanes. Doesn't chase.
         const closest = outfielders[0];
         const supportSide = closest && closest.x < ball.x ? 1 : -1;
-        tx = ball.x + supportSide * 80;
-        ty = ball.y + forward * (-150); // 150 units goal-side (was 90)
+        tx = ball.x + supportSide * 70;
+        ty = ball.y + (isHomeTeam ? 110 : -110); // 110 units goal-side
         ty = isHomeTeam ? Math.min(H - 80, ty) : Math.max(80, ty);
       } else {
         // LAST DEFENDER: hold back, own lane, between ball and goal
@@ -1155,9 +1162,9 @@
       if (other.team !== p.team) continue;
       const dx = p.x - other.x, dy = p.y - other.y;
       const d = Math.hypot(dx, dy);
-      if (d < 82 && d > 0.01) {
-        sepX += (dx / d) * (82 - d) * 0.12;
-        sepY += (dy / d) * (82 - d) * 0.12;
+      if (d < 95 && d > 0.01) {
+        sepX += (dx / d) * (95 - d) * 0.14;
+        sepY += (dy / d) * (95 - d) * 0.14;
       }
     }
 
@@ -1172,16 +1179,22 @@
     if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 1.14;
 
     if (p._engaging) {
-      // Start sprinting only with enough stamina (matches user's rule)
-      if (!p._sprintingAI && p.stamina > STAMINA_MIN_TO_SPRINT) {
+      // Distance-aware sprint: sprint to close down, then settle into a
+      // jog as we arrive at the press position. Mirrors how a real
+      // defender approaches — fast to commit, controlled at the tackle.
+      const distToTarget = Math.hypot(tx - p.x, ty - p.y);
+      const wantSprint = distToTarget > 95;
+      if (wantSprint && !p._sprintingAI && p.stamina > STAMINA_MIN_TO_SPRINT) {
         p._sprintingAI = true;
       }
-      // Keep sprinting until stamina depleted
-      if (p._sprintingAI && p.stamina <= 0) {
+      if (p._sprintingAI && (p.stamina <= 0 || !wantSprint)) {
         p._sprintingAI = false;
       }
       if (p._sprintingAI) {
         speedLimit = PLAYER_SPRINT_MAX * 1.00;
+      } else if (!wantSprint) {
+        // Close to the press — controlled jog instead of barrelling through
+        speedLimit = PLAYER_WALK_MAX * 1.05;
       }
     } else {
       p._sprintingAI = false;
@@ -1458,7 +1471,7 @@
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
       const d = Math.hypot(dx, dy);
-      const contactDist = p.r + carrier.r + 13;
+      const contactDist = p.r + carrier.r + 9;
 
       if (d < contactDist) {
         // TACKLE — transfer possession, shove old carrier clear, stun
