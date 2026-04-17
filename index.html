@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.4.1</div>
+  <div id="version-tag">v3.4.2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1125,24 +1125,35 @@
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
       } else if (ballRank === 0) {
-        // PRESS — close down the carrier but stop GOAL-SIDE of the ball,
-        // not on top of it. This mirrors how a real defender approaches:
-        // they cut off the angle to goal and force the carrier sideways
-        // or backwards. Tackles only happen when the carrier dribbles
-        // INTO this pressing position; the AI doesn't try to body-block.
-        const goalSideY = isHomeTeam ? 36 : -36;  // away from ball toward own goal
-        // Anticipate ball drift: blend in a small velocity lead but
-        // keep most weight on actual position so we settle into a press.
-        tx = ball.x + ball.vx * 2;
-        ty = ball.y + ball.vy * 2 + goalSideY;
+        if (!ballCarrier) {
+          // LOOSE BALL — just go get it. No positional press (there's
+          // no carrier to contain). Lead by ball velocity so we meet
+          // the ball where it's going.
+          tx = ball.x + ball.vx * 4;
+          ty = ball.y + ball.vy * 4;
+        } else {
+          // OPPONENT HAS BALL — press goal-side so we cut off their
+          // angle to goal instead of bodying the carrier.
+          const goalSideY = isHomeTeam ? 36 : -36;
+          tx = ball.x + ball.vx * 2;
+          ty = ball.y + ball.vy * 2 + goalSideY;
+        }
       } else if (ballRank === 1) {
-        // COVER — second defender sits deeper and to the WEAK side
-        // (opposite of the presser) to seal pass lanes. Doesn't chase.
-        const closest = outfielders[0];
-        const supportSide = closest && closest.x < ball.x ? 1 : -1;
-        tx = ball.x + supportSide * 70;
-        ty = ball.y + (isHomeTeam ? 110 : -110); // 110 units goal-side
-        ty = isHomeTeam ? Math.min(H - 80, ty) : Math.max(80, ty);
+        if (!ballCarrier) {
+          // Loose ball — rank 1 also closes in, offset slightly so
+          // they don't stack on rank 0
+          const closest = outfielders[0];
+          const offsetX = closest && closest.x < ball.x ? 40 : -40;
+          tx = ball.x + ball.vx * 3 + offsetX;
+          ty = ball.y + ball.vy * 3;
+        } else {
+          // Opponent has ball — classic second-defender cover position
+          const closest = outfielders[0];
+          const supportSide = closest && closest.x < ball.x ? 1 : -1;
+          tx = ball.x + supportSide * 70;
+          ty = ball.y + (isHomeTeam ? 110 : -110);
+          ty = isHomeTeam ? Math.min(H - 80, ty) : Math.max(80, ty);
+        }
       } else {
         // LAST DEFENDER: hold back, own lane, between ball and goal
         if (p.role === 'defender') {
