@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.2.1</div>
+  <div id="version-tag">v3.2.2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -435,7 +435,7 @@
   const QUAD_DRAG = 0.0038;
 
   const MAX_SPIN = 0.26;
-  const MAGNUS_COEFF = 0.042;
+  const MAGNUS_COEFF = 0.0462;
   const SPIN_DECAY = 0.982;
 
   const GRAVITY = 0.36;
@@ -1258,11 +1258,10 @@
       return;
     }
 
-    // Shoot range tightened — no more half-field shots. Probability
-    // scales quadratically with proximity so close-range shots dominate
-    // and edge-of-range shots are rare.
-    const shootRange = isHomeTeam ? 250 : 300;
-    const baseProb = isHomeTeam ? 0.06 : 0.08;
+    // Symmetric shot rules — both teams use the same range and base
+    // probability so opponents play with the same urgency as teammates.
+    const shootRange = 270;
+    const baseProb = 0.07;
     const proximity = distToGoal < shootRange
       ? Math.max(0, 1 - distToGoal / shootRange)
       : 0;
@@ -1717,18 +1716,25 @@
     }
     userPlayer.stamina = STAMINA_MAX;
 
-    // Possession alternates: team that conceded kicks off. User gets
-    // the ball at game start (lastScorer === null) and after they concede.
+    // Possession alternates: team that conceded kicks off. Possession
+    // goes to the STRIKER of that team, regardless of whether the user
+    // is currently playing that position (user rotates each goal).
     if (lastScorer === 'home') {
-      // Home scored — away takes kickoff
       const awayStriker = players.find(pp => pp.team === 'away' && pp.role === 'striker');
-      ball.possessedBy = awayStriker;
-      ball.x = awayStriker.x;
-      ball.y = awayStriker.y + DRIBBLE_OFFSET;
+      if (awayStriker) {
+        ball.possessedBy = awayStriker;
+        ball.x = awayStriker.x;
+        ball.y = awayStriker.y + DRIBBLE_OFFSET;
+      }
     } else {
-      ball.possessedBy = userPlayer;
-      ball.x = userPlayer.x;
-      ball.y = userPlayer.y - DRIBBLE_OFFSET;
+      // Home kicks off — find whichever player currently holds the
+      // striker slot (swapped each rotation)
+      const homeStriker = players.find(pp => pp.team === 'home' && pp._slot === 'striker');
+      if (homeStriker) {
+        ball.possessedBy = homeStriker;
+        ball.x = homeStriker.x;
+        ball.y = homeStriker.y - DRIBBLE_OFFSET;
+      }
     }
   }
 
