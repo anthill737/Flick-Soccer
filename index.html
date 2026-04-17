@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.4.3</div>
+  <div id="version-tag">v3.4.4</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -917,7 +917,6 @@
   // USER PLAYER MOVEMENT
   // ============================================================
   function updateUserPlayer() {
-    if (userPlayer.kickAnimT < userPlayer.kickAnimDur) userPlayer.kickAnimT++;
     if (ball.possessedBy === userPlayer) userPlayer._lastPossessAt = performance.now();
 
     let inX = 0, inY = 0;
@@ -2535,6 +2534,12 @@
 
     smoothedBall.x += (ball.x - smoothedBall.x) * BALL_SMOOTH;
     smoothedBall.y += (ball.y - smoothedBall.y) * BALL_SMOOTH;
+    // Advance kick animation for every player in one place (was only
+    // happening for the user — every AI's leg stayed out permanently
+    // after their first kick because kickAnimT never incremented).
+    for (const p of players) {
+      if (p.kickAnimT < p.kickAnimDur) p.kickAnimT++;
+    }
     updateUserPlayer();
     for (const p of players) updateAI(p);
     handleTackles();
