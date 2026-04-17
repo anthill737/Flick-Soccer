@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.2.2</div>
+  <div id="version-tag">v3.2.3</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -918,7 +918,7 @@
       const dx = input.joyCurX - input.joyStartX;
       const dy = input.joyCurY - input.joyStartY;
       const mag = Math.hypot(dx, dy);
-      const maxReach = 60;
+      const maxReach = 85;
       if (mag > 8) {
         const clampedMag = Math.min(mag, maxReach);
         inX = (dx / mag);
@@ -1929,42 +1929,68 @@
   function drawTouchControls() {
     // Left joystick (only if active on touch)
     if (input.joyActive) {
-      // Base ring
-      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(input.joyStartX, input.joyStartY, 60, 0, Math.PI*2);
-      ctx.stroke();
-      // Stick
+      const maxReachVis = 85;
+      const sprintThresholdR = maxReachVis * 0.97;
       const dx = input.joyCurX - input.joyStartX;
       const dy = input.joyCurY - input.joyStartY;
       const mag = Math.hypot(dx, dy);
-      const clamped = Math.min(mag, 60);
+      const clamped = Math.min(mag, maxReachVis);
       const nx = mag > 0 ? dx/mag : 0;
       const ny = mag > 0 ? dy/mag : 0;
-      const sprintThresholdR = 60 * 0.97;
       const isSprinting = mag > sprintThresholdR;
-      // Sprint threshold ring — always visible so the player can FEEL
-      // the boundary between run and sprint. Dashed; brighter when crossed.
-      ctx.strokeStyle = isSprinting ? 'rgba(255, 216, 74, 0.85)' : 'rgba(255, 216, 74, 0.35)';
+
+      // Base ring — dim
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
       ctx.lineWidth = 2;
-      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(input.joyStartX, input.joyStartY, maxReachVis, 0, Math.PI*2);
+      ctx.stroke();
+
+      // Stamina ring — concentric, fills clockwise proportional to stamina.
+      // Color shifts green -> yellow -> red as stamina drains.
+      const staminaPct = userPlayer.stamina / STAMINA_MAX;
+      const staminaColor = staminaPct > 0.5 ? '#4ecd6a'
+                         : staminaPct > 0.2 ? '#ffd84a' : '#ff5252';
+      ctx.strokeStyle = staminaColor;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(input.joyStartX, input.joyStartY, maxReachVis + 10,
+              -Math.PI/2, -Math.PI/2 + staminaPct * Math.PI * 2);
+      ctx.stroke();
+
+      // Sprint threshold ring — always visible so the player can FEEL
+      // the edge of walk vs sprint. Dashed; brightens when crossed.
+      ctx.strokeStyle = isSprinting ? 'rgba(255, 216, 74, 0.95)' : 'rgba(255, 216, 74, 0.4)';
+      ctx.lineWidth = isSprinting ? 3 : 2;
+      ctx.setLineDash([5, 4]);
       ctx.beginPath();
       ctx.arc(input.joyStartX, input.joyStartY, sprintThresholdR, 0, Math.PI*2);
       ctx.stroke();
       ctx.setLineDash([]);
-      // Sprint glow (bolder ring when actively sprinting)
+
+      // Sprint glow — pulsing yellow halo when sprinting
       if (isSprinting) {
-        ctx.strokeStyle = 'rgba(255, 216, 74, 0.7)';
-        ctx.lineWidth = 3;
+        const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 90);
+        ctx.strokeStyle = `rgba(255, 216, 74, ${pulse})`;
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(input.joyStartX, input.joyStartY, 66, 0, Math.PI*2);
+        ctx.arc(input.joyStartX, input.joyStartY, maxReachVis + 20, 0, Math.PI*2);
         ctx.stroke();
       }
-      ctx.fillStyle = isSprinting ? 'rgba(255, 216, 74, 0.9)' : 'rgba(255,255,255,0.8)';
+
+      // Stick head
+      ctx.fillStyle = isSprinting ? 'rgba(255, 216, 74, 0.95)' : 'rgba(255,255,255,0.82)';
       ctx.beginPath();
-      ctx.arc(input.joyStartX + nx * clamped, input.joyStartY + ny * clamped, 22, 0, Math.PI*2);
+      ctx.arc(input.joyStartX + nx * clamped, input.joyStartY + ny * clamped, 26, 0, Math.PI*2);
       ctx.fill();
+
+      // "SPRINT" label pops up when sprinting
+      if (isSprinting) {
+        ctx.fillStyle = '#ffd84a';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('SPRINT', input.joyStartX, input.joyStartY - maxReachVis - 28);
+      }
     }
 
     // Hint (only when nothing is happening & touch device)
@@ -1976,14 +2002,26 @@
       ctx.fillText('FLICK', W * 0.75, H * 0.88);
     }
 
-    // Stamina bar — drawn as ring around user player
-    if (userPlayer.stamina < STAMINA_MAX - 0.1) {
+    // Stamina bar — ring around user player; doubles as a strong
+    // sprint indicator (bright glow) when actively sprinting.
+    if (userPlayer.stamina < STAMINA_MAX - 0.1 || userPlayer.isSprinting) {
       const pct = userPlayer.stamina / STAMINA_MAX;
-      ctx.strokeStyle = userPlayer.stamina < 20 ? 'rgba(255,107,107,0.9)' : userPlayer.stamina < 50 ? 'rgba(255,216,74,0.9)' : 'rgba(78,205,196,0.9)';
-      ctx.lineWidth = 2.5;
+      const baseColor = userPlayer.stamina < 20 ? 'rgba(255,82,82,0.95)'
+                      : userPlayer.stamina < 50 ? 'rgba(255,216,74,0.95)'
+                      : 'rgba(78,205,106,0.95)';
+      ctx.strokeStyle = baseColor;
+      ctx.lineWidth = userPlayer.isSprinting ? 4 : 2.5;
       ctx.beginPath();
-      ctx.arc(userPlayer.x, userPlayer.y, userPlayer.r + 6, -Math.PI/2, -Math.PI/2 + pct * Math.PI * 2);
+      ctx.arc(userPlayer.x, userPlayer.y, userPlayer.r + 7, -Math.PI/2, -Math.PI/2 + pct * Math.PI * 2);
       ctx.stroke();
+      // Outer glow when sprinting — player looks "lit up"
+      if (userPlayer.isSprinting) {
+        ctx.strokeStyle = 'rgba(255, 216, 74, 0.35)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(userPlayer.x, userPlayer.y, userPlayer.r + 12, 0, Math.PI*2);
+        ctx.stroke();
+      }
     }
 
     // Flick guide
