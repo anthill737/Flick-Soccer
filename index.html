@@ -70,19 +70,17 @@
   #lobToggle.on { background: #ffd84a; color: #4a3800; border-color: #ffd84a; }
   #version-tag {
     position: fixed;
-    top: 50%;
-    left: 8px;
-    transform: translateY(-50%);
-    background: #ff3030;
+    bottom: 6px;
+    right: 8px;
+    background: rgba(0,0,0,0.55);
     color: #fff;
-    padding: 8px 14px;
-    border-radius: 10px;
-    font-size: 22px;
-    font-weight: 900;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
     letter-spacing: 1px;
     z-index: 2000;
     pointer-events: none;
-    box-shadow: 0 0 14px rgba(255,0,0,0.7);
     font-family: monospace;
   }
 
@@ -178,7 +176,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V7</div>
+  <div id="version-tag">V8</div>
 </div>
 
 <script>
@@ -214,7 +212,7 @@
   const ctx = canvas.getContext('2d');
 
   // Game logical dimensions — we render to fit screen
-  let W = 1100, H = 640;
+  let W = 1100, H = 900;
   let canvasScale = 1;
 
   function resizeCanvas() {
@@ -726,61 +724,102 @@
     let tx, ty;
     const isHomeTeam = p.team === 'home';
     const ownGoalY = isHomeTeam ? H - 6 : 6;
+    const ownGoalX = W / 2;
     const attackGoalY = isHomeTeam ? 6 : H - 6;
 
     if (p.role === 'keeper') {
-      // Track ball along goal line
+      // Track ball along goal line, biased toward cutting angle
       const goalCenterY = isHomeTeam ? H - 30 : 30;
       const goalLimitL = W/2 - GOAL_WIDTH/2 + p.r + 4;
       const goalLimitR = W/2 + GOAL_WIDTH/2 - p.r - 4;
       tx = Math.max(goalLimitL, Math.min(goalLimitR, ball.x));
       ty = goalCenterY;
-      // Rush out if ball is very close
+      // Rush out if ball is close & in danger zone
       const bdist = Math.hypot(ball.x - p.x, ball.y - p.y);
-      if (bdist < 80 && Math.abs(ball.y - ownGoalY) < 100) {
+      if (bdist < 110 && Math.abs(ball.y - ownGoalY) < 140) {
         tx = ball.x;
-        ty = ball.y + (isHomeTeam ? -10 : 10);
+        ty = ball.y + (isHomeTeam ? -12 : 12);
       }
     } else {
-      // Outfield: chase ball if close; otherwise hold formation
-      const bdist = Math.hypot(ball.x - p.x, ball.y - p.y);
       const ballCarrier = ball.possessedBy;
 
       if (ballCarrier && ballCarrier.team === p.team) {
-        // Teammate has ball: move to support
-        if (p.role === 'striker' || p.role === 'mid') {
-          // Go toward attacking goal ahead of ball carrier
-          tx = ball.x + (Math.random() - 0.5) * 30;
-          ty = isHomeTeam ? ball.y - 80 : ball.y + 80;
+        // TEAMMATE HAS BALL: support play
+        if (ballCarrier.isUser) {
+          // User has ball — make supporting runs so user can pass forward
+          if (p.role === 'defender') {
+            // Defenders hold line slightly behind ball
+            tx = p.homeX;
+            ty = isHomeTeam
+              ? Math.min(H * 0.75, ball.y + 40)
+              : Math.max(H * 0.25, ball.y - 40);
+          } else {
+            // Striker/mid: run into space ahead of user toward goal
+            // Spread left/right using home side as hint
+            const laneOffset = (p.homeX < W/2 ? -1 : 1) * 140;
+            tx = W/2 + laneOffset + Math.sin(performance.now() / 1200 + p.homeX) * 30;
+            ty = isHomeTeam ? ball.y - 160 : ball.y + 160;
+          }
         } else {
-          // Defender: return to home position
-          tx = p.homeX;
-          ty = p.homeY;
+          // AI teammate has ball
+          if (p.role === 'striker' || p.role === 'mid') {
+            tx = ball.x + (Math.random() - 0.5) * 40;
+            ty = isHomeTeam ? ball.y - 110 : ball.y + 110;
+          } else {
+            tx = p.homeX;
+            ty = p.homeY;
+          }
         }
       } else {
-        // We don't have ball — closest opponent player or defender chases
-        if (bdist < 140 || p.role === 'defender') {
-          // Chase
+        // DEFENSIVE PHASE: real soccer roles — pressure, cover, mark
+        // Find closest teammate (outfield) to ball
+        let closestToBall = null, closestDist = Infinity;
+        for (const mate of players) {
+          if (mate.team !== p.team || mate.role === 'keeper') continue;
+          const d = Math.hypot(mate.x - ball.x, mate.y - ball.y);
+          if (d < closestDist) { closestDist = d; closestToBall = mate; }
+        }
+
+        if (p === closestToBall) {
+          // PRESSURE: closest player closes down the ball
           tx = ball.x;
           ty = ball.y;
+        } else if (p.role === 'defender') {
+          // COVER: sit between ball and own goal, slightly goal-side
+          const coverBias = 0.42;
+          tx = ball.x * (1 - coverBias) + ownGoalX * coverBias;
+          ty = ball.y * (1 - coverBias) + ownGoalY * coverBias;
+          // Anchor toward home column so defenders don't both chase same lane
+          tx = tx * 0.55 + p.homeX * 0.45;
         } else {
-          // Hold home
-          tx = p.homeX;
-          ty = p.homeY;
+          // MARK: pick nearest opposing attacker, take goal-side position
+          let target = null, tdist = Infinity;
+          for (const opp of players) {
+            if (opp.team === p.team || opp.role === 'keeper') continue;
+            const d = Math.hypot(opp.x - p.x, opp.y - p.y);
+            if (d < tdist) { tdist = d; target = opp; }
+          }
+          if (target) {
+            // Stand on goal-side of the attacker
+            tx = target.x;
+            ty = target.y + (isHomeTeam ? 22 : -22);
+          } else {
+            tx = p.homeX; ty = p.homeY;
+          }
         }
       }
     }
 
-    // Separation: avoid clumping with same-team players
+    // Separation — avoid clumping with same-team players
     let sepX = 0, sepY = 0;
     for (const other of players) {
       if (other === p) continue;
       if (other.team !== p.team) continue;
       const dx = p.x - other.x, dy = p.y - other.y;
       const d = Math.hypot(dx, dy);
-      if (d < 45 && d > 0.01) {
-        sepX += (dx / d) * (45 - d) * 0.04;
-        sepY += (dy / d) * (45 - d) * 0.04;
+      if (d < 50 && d > 0.01) {
+        sepX += (dx / d) * (50 - d) * 0.05;
+        sepY += (dy / d) * (50 - d) * 0.05;
       }
     }
 
@@ -788,8 +827,9 @@
     const dy = (ty - p.y) + sepY;
     const d = Math.hypot(dx, dy);
 
-    let speedLimit = PLAYER_WALK_MAX * 0.78;
-    if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 0.95;
+    // Speed: +15% for outfield (0.78 -> 0.90), +20% for keeper (0.95 -> 1.14)
+    let speedLimit = PLAYER_WALK_MAX * 0.90;
+    if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 1.14;
 
     let tvx = 0, tvy = 0;
     if (d > 4) {
@@ -797,8 +837,8 @@
       tvy = (dy / d) * speedLimit;
     }
 
-    p.vx += (tvx - p.vx) * 0.12;
-    p.vy += (tvy - p.vy) * 0.12;
+    p.vx += (tvx - p.vx) * 0.13;
+    p.vy += (tvy - p.vy) * 0.13;
     p.x += p.vx;
     p.y += p.vy;
 
@@ -820,7 +860,6 @@
   }
 
   function aiKick(p) {
-    // Decide: pass to teammate or shoot
     if (!p._kickCooldown) p._kickCooldown = 0;
     if (p._kickCooldown > 0) { p._kickCooldown--; return; }
 
@@ -829,9 +868,10 @@
     const goalY = isHomeTeam ? goalTopY : goalBotY + GOAL_DEPTH;
     const distToGoal = Math.hypot(goalX - p.x, goalY - p.y);
 
-    // AI shoots if close to goal
-    if (distToGoal < 200 && Math.random() < 0.022) {
-      // Shoot at goal with some error
+    // Enemy (away) shoots more aggressively from farther; home AI slightly more eager too
+    const shootRange = isHomeTeam ? 230 : 300;
+    const shootProb = isHomeTeam ? 0.028 : 0.042;
+    if (distToGoal < shootRange && Math.random() < shootProb) {
       const tx = goalX + (Math.random() - 0.5) * (GOAL_WIDTH - 20);
       const ty = goalY;
       const dx = tx - p.x, dy = ty - p.y;
@@ -844,39 +884,59 @@
       ball.vy = (dy/d) * power;
       ball.vz = 0; ball.z = 0;
       ball.spin = (Math.random() - 0.5) * 0.3;
-      p._kickCooldown = 100;
+      p._kickCooldown = 90;
       flickResolved = false;
       p.kickAnimT = 0; p.kickAnimDur = 14;
       p.kickAnimDir = { x: dx/d, y: dy/d };
       return;
     }
 
-    // Otherwise dribble forward or pass
-    if (Math.random() < 0.012) {
-      // Pass to nearest teammate ahead
+    // Pass decision — score candidates by forward progress + openness
+    if (Math.random() < 0.028) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
         const ahead = isHomeTeam ? (p.y - mate.y) : (mate.y - p.y);
-        if (ahead < 0) continue;
-        const score = ahead - Math.hypot(mate.x - p.x, mate.y - p.y) * 0.3;
+        if (ahead < -40) continue; // allow slight back-pass but prefer forward
+
+        // Openness: distance to nearest opponent
+        let mateMarkDist = Infinity;
+        for (const opp of players) {
+          if (opp.team === p.team) continue;
+          const od = Math.hypot(opp.x - mate.x, opp.y - mate.y);
+          if (od < mateMarkDist) mateMarkDist = od;
+        }
+        const openness = Math.min(140, mateMarkDist); // cap contribution
+
+        const distPenalty = Math.hypot(mate.x - p.x, mate.y - p.y) * 0.15;
+        let score = ahead * 0.5 + openness * 1.1 - distPenalty;
+        // Prefer passing to the human player when they're on our team
+        if (mate.isUser && isHomeTeam) score += 50;
+        // Prefer striker for final ball
+        if (mate.role === 'striker') score += 15;
+
         if (score > bestScore) { bestScore = score; bestMate = mate; }
       }
       if (bestMate) {
         const dx = bestMate.x - p.x, dy = bestMate.y - p.y;
         const d = Math.hypot(dx, dy);
+        // Lead the pass slightly toward the receiver's velocity
+        const leadX = bestMate.vx * 8;
+        const leadY = bestMate.vy * 8;
+        const ldx = dx + leadX, ldy = dy + leadY;
+        const ld = Math.hypot(ldx, ldy);
         const power = Math.min(9.4, 4.0 + d * 0.021);
         ball.possessedBy = null;
-        ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
-        ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
-        ball.vx = (dx/d) * power;
-        ball.vy = (dy/d) * power;
+        ball.x = p.x + (ldx/ld) * (p.r + ball.r + 2);
+        ball.y = p.y + (ldy/ld) * (p.r + ball.r + 2);
+        ball.vx = (ldx/ld) * power;
+        ball.vy = (ldy/ld) * power;
         ball.vz = 0; ball.z = 0;
         ball.spin = 0;
-        p._kickCooldown = 70;
+        p._kickCooldown = 60;
         flickResolved = false;
         p.kickAnimT = 0; p.kickAnimDur = 12;
-        p.kickAnimDir = { x: dx/d, y: dy/d };
+        p.kickAnimDir = { x: ldx/ld, y: ldy/ld };
       }
     }
   }
