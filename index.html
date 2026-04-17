@@ -142,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V14</div>
+  <div id="version-tag">V15</div>
 </div>
 
 <script>
@@ -736,22 +736,23 @@
         if (md < distToBall) teammatesCloserToBall++;
       }
 
-      // BALL-FIRST override with HYSTERESIS — once committed to chasing,
-      // keep chasing until the ball is clearly out of reach or another
-      // teammate is now closer. Prevents on/off flicker that causes
-      // back-and-forth jog.
+      // BALL-FIRST override with HYSTERESIS.
+      // Engage rules (looser — teammates actively go for the ball):
+      //  - Loose ball: closest teammate always; any teammate within 180 also
+      //  - Opponent possession: closest teammate always; 2nd closest if < 200
+      //  - Hysteresis: once engaging, keep engaging until far (>320) or
+      //    teammate regains possession
       let engageBall = p._engaging || false;
       if (engageBall) {
-        // Disengage only when another teammate is clearly closer, or ball
-        // has fled far away, or our team now has possession
         if (ourPossession) engageBall = false;
-        else if (teammatesCloserToBall >= 2) engageBall = false;
-        else if (distToBall > 280) engageBall = false;
+        else if (distToBall > 320) engageBall = false;
       } else {
         if (!ballCarrier) {
           if (teammatesCloserToBall === 0) engageBall = true;
+          else if (distToBall < 180) engageBall = true;
         } else if (ballCarrier.team !== p.team) {
-          if (teammatesCloserToBall === 0 && distToBall < 200) engageBall = true;
+          if (teammatesCloserToBall === 0) engageBall = true;
+          else if (teammatesCloserToBall === 1 && distToBall < 200) engageBall = true;
         }
       }
       p._engaging = engageBall;
@@ -804,10 +805,10 @@
     const dy = (ty - p.y) + sepY;
     const d = Math.hypot(dx, dy);
 
-    // Speed: walk for holding position, sprint-ish when actively engaging the ball
+    // Speed: walk for holding position, full sprint when engaging the ball
     let speedLimit = PLAYER_WALK_MAX * 0.90;
     if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 1.14;
-    if (p._engaging) speedLimit = PLAYER_SPRINT_MAX * 0.88;
+    if (p._engaging) speedLimit = PLAYER_SPRINT_MAX * 1.00;
 
     // Dead zone — don't jitter around the target. Tight when chasing ball,
     // wide when holding a position so players visibly "stand" in their zone.
@@ -953,7 +954,69 @@
   // ============================================================
   // BALL
   // ============================================================
-  function dribbleBall() {
+  // TACKLES — opponent bump steals the ball
+  // ============================================================
+  // When a player (AI or human) without the ball contacts the opposing
+  // player who has it, possession transfers and the previous carrier is
+  // shoved back and briefly stunned. Includes a short post-tackle immunity
+  // so the ball doesn't instantly flip back on the same contact.
+  function handleTackles() {
+    const carrier = ball.possessedBy;
+    if (!carrier) return;
+    if (carrier._tackleImmune && carrier._tackleImmune > 0) {
+      carrier._tackleImmune--;
+      return;
+    }
+
+    for (const p of players) {
+      if (p === carrier) continue;
+      if (p.team === carrier.team) continue; // only opposing players tackle
+      if (p.stunned > 0) continue;
+
+      const dx = carrier.x - p.x;
+      const dy = carrier.y - p.y;
+      const d = Math.hypot(dx, dy);
+      const contactDist = p.r + carrier.r + 3;
+
+      if (d < contactDist) {
+        // TACKLE — transfer possession, bump old carrier back, stun
+        const bumpX = d > 0.01 ? -dx / d : 0;
+        const bumpY = d > 0.01 ? -dy / d : 0;
+
+        // Bump old carrier back ~ball radius + reset velocity away from tackler
+        carrier.vx = bumpX * 3.2;
+        carrier.vy = bumpY * 3.2;
+        carrier.stunned = 22;
+
+        // Also nudge tackler a bit so they don't feel weightless
+        p.vx += -bumpX * 0.8;
+        p.vy += -bumpY * 0.8;
+
+        // Transfer possession
+        ball.possessedBy = p;
+        // Place ball in front of the new carrier (dribble offset ahead of facing)
+        ball.x = p.x + Math.cos(p.facing) * DRIBBLE_OFFSET;
+        ball.y = p.y + Math.sin(p.facing) * DRIBBLE_OFFSET;
+        ball.vx = 0; ball.vy = 0; ball.vz = 0; ball.z = 0;
+        ball.spin = 0;
+
+        // Immunity so the ball doesn't flip on the very next frame
+        p._tackleImmune = 14;
+
+        // Reset AI kick cooldown so they can actually use the new possession
+        p._kickCooldown = 0;
+
+        // Visual feedback — only flash on notable tackles (user involved)
+        if (carrier.isUser || p.isUser) {
+          flashText(carrier.isUser ? 'TACKLED!' : 'TACKLE!', '#ff9f40');
+        }
+
+        break; // one tackle per step
+      }
+    }
+  }
+
+  // ============================================================
     const carrier = ball.possessedBy;
     if (!carrier) return;
 
@@ -1450,6 +1513,7 @@
     smoothedBall.y += (ball.y - smoothedBall.y) * BALL_SMOOTH;
     updateUserPlayer();
     for (const p of players) updateAI(p);
+    handleTackles();
     dribbleBall();
     updateBall();
     updateParticles();
