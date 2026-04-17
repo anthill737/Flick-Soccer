@@ -142,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V13</div>
+  <div id="version-tag">V14</div>
 </div>
 
 <script>
@@ -314,6 +314,12 @@
   let flickResolved = true;
   let flashMsg = null;
   const particles = [];
+
+  // Smoothed ball position — used by AI for formation/positional targets.
+  // Prevents teammates from shuffling on every tiny ball movement. The raw
+  // ball.x/y is still used for direct ball-engagement (chasing/pressuring).
+  const smoothedBall = { x: W/2, y: H/2 };
+  const BALL_SMOOTH = 0.035;
 
   function setLobMode(on) {
     lobMode = on;
@@ -730,51 +736,54 @@
         if (md < distToBall) teammatesCloserToBall++;
       }
 
-      // BALL-FIRST override — active participation. Only ONE teammate leaves
-      // formation at a time (previously up to 2 + anyone within 130, which
-      // caused all three outfielders to stack on the ball).
-      let engageBall = false;
-      if (!ballCarrier) {
-        // Loose ball: only the single closest teammate chases
-        if (teammatesCloserToBall === 0) engageBall = true;
-      } else if (ballCarrier.team !== p.team) {
-        // Opponent has ball: only the closest pressures, within 220 units
-        if (teammatesCloserToBall === 0 && distToBall < 220) engageBall = true;
+      // BALL-FIRST override with HYSTERESIS — once committed to chasing,
+      // keep chasing until the ball is clearly out of reach or another
+      // teammate is now closer. Prevents on/off flicker that causes
+      // back-and-forth jog.
+      let engageBall = p._engaging || false;
+      if (engageBall) {
+        // Disengage only when another teammate is clearly closer, or ball
+        // has fled far away, or our team now has possession
+        if (ourPossession) engageBall = false;
+        else if (teammatesCloserToBall >= 2) engageBall = false;
+        else if (distToBall > 280) engageBall = false;
+      } else {
+        if (!ballCarrier) {
+          if (teammatesCloserToBall === 0) engageBall = true;
+        } else if (ballCarrier.team !== p.team) {
+          if (teammatesCloserToBall === 0 && distToBall < 200) engageBall = true;
+        }
       }
+      p._engaging = engageBall;
 
       if (engageBall) {
-        // Lead the ball slightly — run to where it will be, not where it is
+        // Lead the ball — chase where it will be, not where it is
         tx = ball.x + ball.vx * 6;
         ty = ball.y + ball.vy * 6;
       } else if (ourPossession) {
-        // OFFENSE: push up pitch in our lane
+        // OFFENSE: hold position based on SMOOTHED ball (not jittering)
         if (p.role === 'defender') {
           tx = p.homeX;
-          ty = ball.y - forward * 110;
+          ty = smoothedBall.y - forward * 110;
           ty = isHomeTeam ? Math.max(H * 0.52, ty) : Math.min(H * 0.48, ty);
         } else {
-          // Striker: reachable support run — 180 ahead of ball (was 260 = too far)
           tx = W/2 + laneSide * 130 + Math.sin(performance.now() / 1400 + p.homeX) * 30;
-          ty = ball.y + forward * 180;
+          ty = smoothedBall.y + forward * 180;
           const offsideY = isHomeTeam ? 95 : H - 95;
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
       } else {
-        // DEFENSE — shape role (not the engagement candidate)
+        // DEFENSE — shape role (not the engager)
         if (p.role === 'defender') {
-          tx = p.homeX * 0.55 + ball.x * 0.45;
-          ty = (ball.y + ownGoalY) / 2;
+          tx = p.homeX * 0.55 + smoothedBall.x * 0.45;
+          ty = (smoothedBall.y + ownGoalY) / 2;
           ty = ty * 0.6 + p.homeY * 0.4;
         } else {
-          // Striker: forward outlet, nearer midfield so the pass is reachable
           tx = W/2 + laneSide * 110;
-          ty = ball.y + forward * 110;
+          ty = smoothedBall.y + forward * 110;
           ty = isHomeTeam ? Math.min(H * 0.48, ty) : Math.max(H * 0.52, ty);
         }
       }
-
-      // Remember whether we're engaging so we can sprint
-      p._engaging = engageBall;
     }
 
     // Separation — avoid clumping with same-team players. Larger radius +
@@ -800,8 +809,12 @@
     if (p.role === 'keeper') speedLimit = PLAYER_WALK_MAX * 1.14;
     if (p._engaging) speedLimit = PLAYER_SPRINT_MAX * 0.88;
 
+    // Dead zone — don't jitter around the target. Tight when chasing ball,
+    // wide when holding a position so players visibly "stand" in their zone.
+    const deadZone = p._engaging ? 6 : 32;
+
     let tvx = 0, tvy = 0;
-    if (d > 4) {
+    if (d > deadZone) {
       tvx = (dx / d) * speedLimit;
       tvy = (dy / d) * speedLimit;
     }
@@ -1432,6 +1445,9 @@
 
   function step() {
     updateTimer();
+    // Low-pass filter on ball position for AI formation targets
+    smoothedBall.x += (ball.x - smoothedBall.x) * BALL_SMOOTH;
+    smoothedBall.y += (ball.y - smoothedBall.y) * BALL_SMOOTH;
     updateUserPlayer();
     for (const p of players) updateAI(p);
     dribbleBall();
