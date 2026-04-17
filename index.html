@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.2.0</div>
+  <div id="version-tag">v3.2.1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -789,6 +789,7 @@
     ball._lastKicker = userPlayer;
     ball._kickCooldown = 30;
     ball._isShot = false;
+    ball._shotDead = false;
     stats.home.passes++;
     kickoffLock = false; // user has played the ball — lock clears
     if (gameState === 'kickoff') gameState = 'playing';
@@ -893,6 +894,7 @@
     ball._lastKicker = userPlayer;
     ball._kickCooldown = 30;
     ball._isShot = true; // user kicks count as shots
+    ball._shotDead = false;
     stats.home.shots++;
     kickoffLock = false; // clear once the user has actually played the ball
     if (gameState === 'kickoff') gameState = 'playing';
@@ -1080,6 +1082,12 @@
             ty = smoothedBall.y - forward * 130;
             ty = isHomeTeam ? Math.max(H * 0.55, ty) : Math.min(H * 0.45, ty);
           }
+        } else if (p === ball.possessedBy) {
+          // I HAVE THE BALL — carry it toward the attacking goal, with
+          // a bit of lateral wobble so it's not a straight line.
+          tx = W/2 + Math.sin(performance.now() / 600 + p.homeX) * 70;
+          const targetGoalY = isHomeTeam ? goalTopY + GOAL_DEPTH + 30 : goalBotY - 30;
+          ty = targetGoalY;
         } else {
           // Striker run patterns on a slow cycle (~8s), per-player phase
           const phase = (performance.now() / 1000 + p.homeX * 0.003) % 8;
@@ -1253,13 +1261,12 @@
     // Shoot range tightened — no more half-field shots. Probability
     // scales quadratically with proximity so close-range shots dominate
     // and edge-of-range shots are rare.
-    const shootRange = isHomeTeam ? 230 : 280;
-    const baseProb = isHomeTeam ? 0.04 : 0.055;
-    // proximity: 1.0 at goal, 0.0 at range edge
+    const shootRange = isHomeTeam ? 250 : 300;
+    const baseProb = isHomeTeam ? 0.06 : 0.08;
     const proximity = distToGoal < shootRange
       ? Math.max(0, 1 - distToGoal / shootRange)
       : 0;
-    const shootProb = baseProb * Math.pow(proximity, 1.4) * 5;
+    const shootProb = baseProb * Math.pow(proximity, 1.2) * 5;
     if (distToGoal < shootRange && Math.random() < shootProb) {
       const tx = goalX + (Math.random() - 0.5) * (GOAL_WIDTH - 20);
       const ty = goalY;
@@ -1278,6 +1285,7 @@
       ball._lastKicker = p;
       ball._kickCooldown = 30;
       ball._isShot = true;
+      ball._shotDead = false;
       stats[p.team].shots++;
       flickResolved = false;
       p.kickAnimT = 0; p.kickAnimDur = 14;
@@ -1288,7 +1296,9 @@
     // Pass decision — score candidates by forward progress + openness.
     // Hot-potato: if this AI just won the ball, they pass away much more
     // eagerly (prevents repeated tackle-pong between teams).
-    const passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.18 : 0.055;
+    // Lower pass frequency so AI dribbles / carries more. Hot-potato
+    // still kicks in briefly after winning the ball.
+    const passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
     if (Math.random() < passProb) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
@@ -1366,6 +1376,7 @@
           ball._lastKicker = p;
           ball._kickCooldown = 30;
           ball._isShot = false;
+          ball._shotDead = false;
           stats[p.team].passes++;
           flickResolved = false;
           p.kickAnimT = 0; p.kickAnimDur = 12;
@@ -1388,6 +1399,8 @@
   function handleTackles() {
     const carrier = ball.possessedBy;
     if (!carrier) return;
+    // Keepers are invincible — can't be tackled or have the ball stolen
+    if (carrier.role === 'keeper') return;
     if (carrier._tackleImmune && carrier._tackleImmune > 0) {
       carrier._tackleImmune--;
       return;
@@ -1556,10 +1569,21 @@
       }
     }
 
-    // Goal detection (both goals)
+    // Goal detection (both goals).
+    // If the ball enters the goal-mouth X range while z > 22 (over the
+    // crossbar), mark _shotDead so no goal registers even if it lands
+    // back down inside the goal area afterward.
     if (!flickResolved) {
+      const inTopGoalMouth = ball.y - ball.r < goalTopY + GOAL_DEPTH + 30
+        && ball.x > goalTopX + 3 && ball.x < goalTopX + GOAL_WIDTH - 3;
+      const inBotGoalMouth = ball.y + ball.r > goalBotY - 30
+        && ball.x > goalBotX + 3 && ball.x < goalBotX + GOAL_WIDTH - 3;
+      if ((inTopGoalMouth || inBotGoalMouth) && ball.z >= 22) {
+        ball._shotDead = true;
+      }
+
       // Top goal (away)
-      if (ball.y - ball.r < goalTopY + GOAL_DEPTH && ball.x > goalTopX + 3 && ball.x < goalTopX + GOAL_WIDTH - 3 && ball.z < 22) {
+      if (ball.y - ball.r < goalTopY + GOAL_DEPTH && ball.x > goalTopX + 3 && ball.x < goalTopX + GOAL_WIDTH - 3 && ball.z < 22 && !ball._shotDead) {
         if (ball.y < goalTopY + GOAL_DEPTH - 2) {
           scoreHome++;
           stats.home.goals++;
@@ -1579,7 +1603,7 @@
         }
       }
       // Bottom goal (home)
-      if (ball.y + ball.r > goalBotY && ball.x > goalBotX + 3 && ball.x < goalBotX + GOAL_WIDTH - 3 && ball.z < 22) {
+      if (ball.y + ball.r > goalBotY && ball.x > goalBotX + 3 && ball.x < goalBotX + GOAL_WIDTH - 3 && ball.z < 22 && !ball._shotDead) {
         if (ball.y > goalBotY + 2) {
           scoreAway++;
           stats.away.goals++;
@@ -1677,6 +1701,8 @@
     ball.x = W/2;
     ball.y = H/2;
     ball.vx = 0; ball.vy = 0; ball.vz = 0; ball.z = 0;
+    ball._shotDead = false;
+    ball._isShot = false;
     ball.spin = 0;
     ball.possessedBy = null;
     ball.trail = [];
