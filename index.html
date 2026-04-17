@@ -79,6 +79,74 @@
     inset: -14px;
   }
   #lobToggle.on { background: #ffd84a; color: #4a3800; border-color: #ffd84a; box-shadow: 0 0 14px rgba(255,216,74,0.6); }
+  /* Countdown overlay */
+  #countdown {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 120px;
+    font-weight: 900;
+    color: #ffd84a;
+    text-shadow: 0 0 24px rgba(0,0,0,0.8), 0 6px 12px rgba(0,0,0,0.6);
+    z-index: 1100;
+    pointer-events: none;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    letter-spacing: 2px;
+    display: none;
+  }
+  #countdown.visible { display: block; }
+
+  /* End-of-match screen */
+  #endscreen {
+    position: fixed;
+    inset: 0;
+    background: rgba(10,10,10,0.94);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 24px 16px 24px;
+    z-index: 1200;
+    color: #e5e5e5;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow-y: auto;
+  }
+  #endscreen.visible { display: flex; }
+  #endscreen h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; letter-spacing: 1px; }
+  #endscreen .result { font-size: 28px; font-weight: 800; margin: 10px 0; }
+  #endscreen .result.win { color: #ffd84a; }
+  #endscreen .result.lose { color: #ff6b6b; }
+  #endscreen .result.draw { color: #4ecdc4; }
+  #endscreen .final-score { font-size: 48px; font-weight: 900; margin-bottom: 18px; font-variant-numeric: tabular-nums; }
+  #endscreen .final-score .home { color: #e63946; }
+  #endscreen .final-score .away { color: #2e5fa8; }
+  #endscreen .final-score .dash { color: #888; margin: 0 10px; }
+  #endscreen table { border-collapse: collapse; margin: 4px 0 16px; font-size: 13px; width: 94%; max-width: 380px; }
+  #endscreen th, #endscreen td { padding: 6px 8px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  #endscreen th { color: #aaa; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #endscreen td.label { text-align: left; color: #aaa; font-weight: 500; font-size: 12px; }
+  #endscreen .home-col { color: #e63946; font-weight: 700; }
+  #endscreen .away-col { color: #5a8be8; font-weight: 700; }
+  #endscreen .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; color: #888; margin: 8px 0 6px; }
+  #endscreen button {
+    background: #4ecdc4;
+    color: #0a0a0a;
+    border: none;
+    padding: 12px 32px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    margin-top: 6px;
+    margin-bottom: 16px;
+  }
+  #endscreen .history { width: 94%; max-width: 380px; font-size: 12px; }
+  #endscreen .history-row { display: flex; justify-content: space-between; padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  #endscreen .history-row .ts { color: #777; flex: 1; }
+  #endscreen .history-row .sc { font-variant-numeric: tabular-nums; font-weight: 600; }
+  #endscreen .history-empty { color: #555; font-style: italic; text-align: center; padding: 8px; }
+
   #version-tag {
     position: fixed;
     bottom: 6px;
@@ -142,8 +210,10 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V22</div>
+  <div id="countdown"></div>
+  <div id="version-tag">V23</div>
 </div>
+<div id="endscreen"></div>
 
 <script>
 (function() {
@@ -210,6 +280,8 @@
   const scoreAwayEl = document.getElementById('scoreAway');
   const timerEl = document.getElementById('timer');
   const lobToggle = document.getElementById('lobToggle');
+  const countdownEl = document.getElementById('countdown');
+  const endscreenEl = document.getElementById('endscreen');
 
   // ============================================================
   // PHYSICS / TUNING CONSTANTS
@@ -311,6 +383,34 @@
   let scoreHome = 0, scoreAway = 0;
   let lastScorer = null; // 'home' | 'away' | null — who scored most recently; other team kicks off
   let matchSeconds = 120;
+
+  // ============================================================
+  // GAME STATE MACHINE — countdown between plays, end screen on final
+  // ============================================================
+  let gameState = 'countdown'; // 'countdown' | 'playing' | 'goalPause' | 'ended'
+  let countdownFrames = 0;
+  const COUNTDOWN_DURATION = 180; // 3 seconds at 60Hz
+
+  // Per-match stats
+  function emptyTeamStats() {
+    return { passes: 0, tackles: 0, shots: 0, shotsOnGoal: 0, goals: 0, possessionFrames: 0 };
+  }
+  let stats = { home: emptyTeamStats(), away: emptyTeamStats() };
+
+  // Match history — last 10 games, persisted in localStorage
+  const MATCH_HISTORY_KEY = 'flickSoccerHistory_v1';
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(MATCH_HISTORY_KEY)) || []; }
+    catch (e) { return []; }
+  }
+  function saveMatchRecord(record) {
+    try {
+      const hist = loadHistory();
+      hist.unshift(record);
+      if (hist.length > 10) hist.length = 10;
+      localStorage.setItem(MATCH_HISTORY_KEY, JSON.stringify(hist));
+    } catch (e) { /* storage disabled, ignore */ }
+  }
   let matchStartTime = null;
   let lobMode = false;
   let flickResolved = true;
@@ -609,6 +709,8 @@
     flickResolved = false;
     ball._lastKicker = userPlayer;
     ball._kickCooldown = 30;
+    ball._isShot = true; // user kicks count as shots
+    stats.home.shots++;
     userPlayer.kickAnimT = 0;
     userPlayer.kickAnimDur = 14;
     userPlayer.kickAnimDir = { x: dirX, y: dirY };
@@ -918,6 +1020,8 @@
       p._possessionTime = 0;
       ball._lastKicker = p;
       ball._kickCooldown = 30;
+      ball._isShot = true;
+      stats[p.team].shots++;
       flickResolved = false;
       p.kickAnimT = 0; p.kickAnimDur = 14;
       p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -973,6 +1077,8 @@
         p._possessionTime = 0;
         ball._lastKicker = p;
         ball._kickCooldown = 30;
+        ball._isShot = false;
+        stats[p.team].passes++;
         flickResolved = false;
         p.kickAnimT = 0; p.kickAnimDur = 12;
         p.kickAnimDir = { x: ldx/ld, y: ldy/ld };
@@ -1038,6 +1144,8 @@
         // Long immunity so the stunned carrier can't tackle straight back
         p._tackleImmune = 40;
         p._kickCooldown = 0;
+
+        stats[p.team].tackles++;
 
         if (carrier.isUser || p.isUser) {
           flashText(carrier.isUser ? 'TACKLED!' : 'TACKLE!', '#ff9f40');
@@ -1134,12 +1242,16 @@
       if (ball.y - ball.r < goalTopY + GOAL_DEPTH && ball.x > goalTopX + 3 && ball.x < goalTopX + GOAL_WIDTH - 3 && ball.z < 50) {
         if (ball.y < goalTopY + GOAL_DEPTH - 2) {
           scoreHome++;
+          stats.home.goals++;
+          if (ball._isShot && ball._lastKicker && ball._lastKicker.team === 'home') {
+            stats.home.shotsOnGoal++;
+          }
           lastScorer = 'home';
           scoreHomeEl.textContent = scoreHome;
           flickResolved = true;
           flashText('GOAL!', '#ffd84a');
           spawnConfetti(ball.x, ball.y);
-          setTimeout(kickoff, 1400);
+          startGoalPause();
           ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.vz = 0; ball.z = 0;
           return;
         }
@@ -1148,11 +1260,15 @@
       if (ball.y + ball.r > goalBotY && ball.x > goalBotX + 3 && ball.x < goalBotX + GOAL_WIDTH - 3 && ball.z < 50) {
         if (ball.y > goalBotY + 2) {
           scoreAway++;
+          stats.away.goals++;
+          if (ball._isShot && ball._lastKicker && ball._lastKicker.team === 'away') {
+            stats.away.shotsOnGoal++;
+          }
           lastScorer = 'away';
           scoreAwayEl.textContent = scoreAway;
           flickResolved = true;
           flashText('CONCEDED', '#ff6b6b');
-          setTimeout(kickoff, 1400);
+          startGoalPause();
           ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.vz = 0; ball.z = 0;
           return;
         }
@@ -1175,7 +1291,11 @@
       const ddist = Math.hypot(ddx, ddy);
       if (ddist < p.r + ball.r && ball.z < 18) {
         if (p.role === 'keeper' && !flickResolved) {
-          // Keeper catches
+          // Keeper catches — credit the shot as on-target to the shooting team
+          if (ball._isShot && ball._lastKicker && ball._lastKicker.team !== p.team) {
+            stats[ball._lastKicker.team].shotsOnGoal++;
+            ball._isShot = false; // avoid double-counting if it bounces onto keeper again
+          }
           ball.vy = -ball.vy * 0.5;
           ball.vx *= 0.4;
           ball.spin *= 0.2;
@@ -1521,22 +1641,91 @@
     const m = Math.floor(remaining / 60);
     const s = Math.floor(remaining % 60);
     timerEl.textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-    if (remaining <= 0 && !window._matchEnded) {
-      window._matchEnded = true;
-      setTimeout(() => {
-        const result = scoreHome > scoreAway ? 'YOU WIN!' : scoreHome < scoreAway ? 'YOU LOSE' : 'DRAW';
-        flashText(result, scoreHome >= scoreAway ? '#ffd84a' : '#ff6b6b');
-        setTimeout(() => {
-          scoreHome = 0; scoreAway = 0;
-          lastScorer = null;
-          scoreHomeEl.textContent = 0;
-          scoreAwayEl.textContent = 0;
-          matchStartTime = performance.now();
-          window._matchEnded = false;
-          kickoff();
-        }, 3000);
-      }, 100);
+    if (remaining <= 0 && gameState !== 'ended') {
+      endMatch();
     }
+  }
+
+  function endMatch() {
+    gameState = 'ended';
+    // Snapshot and persist
+    const record = {
+      ts: Date.now(),
+      scoreHome, scoreAway,
+      home: { ...stats.home },
+      away: { ...stats.away },
+    };
+    saveMatchRecord(record);
+    showEndScreen(record);
+  }
+
+  function fmtStat(n) { return String(n); }
+
+  function possessionPct(a, b) {
+    const total = a + b;
+    if (total === 0) return [50, 50];
+    return [Math.round(a / total * 100), Math.round(b / total * 100)];
+  }
+
+  function showEndScreen(record) {
+    const [hPct, aPct] = possessionPct(record.home.possessionFrames, record.away.possessionFrames);
+    const result = record.scoreHome > record.scoreAway ? 'YOU WIN'
+                  : record.scoreHome < record.scoreAway ? 'YOU LOSE' : 'DRAW';
+    const resultClass = record.scoreHome > record.scoreAway ? 'win'
+                      : record.scoreHome < record.scoreAway ? 'lose' : 'draw';
+    const history = loadHistory();
+    const histHtml = history.length === 0
+      ? '<div class="history-empty">No past matches</div>'
+      : history.slice(0, 5).map(r => {
+          const d = new Date(r.ts);
+          const when = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+                       d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          return `<div class="history-row"><span class="ts">${when}</span><span class="sc"><span style="color:#e63946">${r.scoreHome}</span>&nbsp;–&nbsp;<span style="color:#5a8be8">${r.scoreAway}</span></span></div>`;
+        }).join('');
+
+    endscreenEl.innerHTML = `
+      <h2>FULL TIME</h2>
+      <div class="result ${resultClass}">${result}</div>
+      <div class="final-score">
+        <span class="home">${record.scoreHome}</span>
+        <span class="dash">–</span>
+        <span class="away">${record.scoreAway}</span>
+      </div>
+
+      <div class="section-title">Match stats</div>
+      <table>
+        <thead><tr><th class="home-col">HOME</th><th></th><th class="away-col">AWAY</th></tr></thead>
+        <tbody>
+          <tr><td class="home-col">${fmtStat(record.home.goals)}</td><td class="label">Goals</td><td class="away-col">${fmtStat(record.away.goals)}</td></tr>
+          <tr><td class="home-col">${fmtStat(record.home.shots)}</td><td class="label">Shots</td><td class="away-col">${fmtStat(record.away.shots)}</td></tr>
+          <tr><td class="home-col">${fmtStat(record.home.shotsOnGoal)}</td><td class="label">Shots on goal</td><td class="away-col">${fmtStat(record.away.shotsOnGoal)}</td></tr>
+          <tr><td class="home-col">${fmtStat(record.home.passes)}</td><td class="label">Passes</td><td class="away-col">${fmtStat(record.away.passes)}</td></tr>
+          <tr><td class="home-col">${fmtStat(record.home.tackles)}</td><td class="label">Tackles</td><td class="away-col">${fmtStat(record.away.tackles)}</td></tr>
+          <tr><td class="home-col">${hPct}%</td><td class="label">Possession</td><td class="away-col">${aPct}%</td></tr>
+        </tbody>
+      </table>
+
+      <div class="section-title">Recent matches</div>
+      <div class="history">${histHtml}</div>
+
+      <button id="playAgainBtn">PLAY AGAIN</button>
+    `;
+    endscreenEl.classList.add('visible');
+    const btn = document.getElementById('playAgainBtn');
+    btn.addEventListener('click', resetForNewMatch);
+    btn.addEventListener('touchstart', e => { e.preventDefault(); resetForNewMatch(); }, { passive: false });
+  }
+
+  function resetForNewMatch() {
+    scoreHome = 0; scoreAway = 0;
+    lastScorer = null;
+    scoreHomeEl.textContent = 0;
+    scoreAwayEl.textContent = 0;
+    stats = { home: emptyTeamStats(), away: emptyTeamStats() };
+    matchStartTime = performance.now();
+    endscreenEl.classList.remove('visible');
+    kickoff();
+    startCountdown();
   }
 
   // ============================================================
@@ -1550,8 +1739,40 @@
   let lastFrameTime = null;
 
   function step() {
+    if (gameState === 'ended') return; // frozen after match ends
+
+    if (gameState === 'countdown') {
+      countdownFrames--;
+      updateCountdownDisplay();
+      if (countdownFrames <= 0) {
+        gameState = 'playing';
+        countdownEl.classList.remove('visible');
+      }
+      // still animate particles/flash during countdown
+      updateParticles();
+      if (flashMsg) {
+        flashMsg.t++;
+        if (flashMsg.t > 55) flashMsg = null;
+      }
+      return;
+    }
+
+    if (gameState === 'goalPause') {
+      countdownFrames--;
+      updateParticles();
+      if (flashMsg) {
+        flashMsg.t++;
+        if (flashMsg.t > 55) flashMsg = null;
+      }
+      if (countdownFrames <= 0) {
+        kickoff();
+        startCountdown();
+      }
+      return;
+    }
+
+    // playing
     updateTimer();
-    // Low-pass filter on ball position for AI formation targets
     smoothedBall.x += (ball.x - smoothedBall.x) * BALL_SMOOTH;
     smoothedBall.y += (ball.y - smoothedBall.y) * BALL_SMOOTH;
     updateUserPlayer();
@@ -1564,6 +1785,32 @@
       flashMsg.t++;
       if (flashMsg.t > 55) flashMsg = null;
     }
+
+    // Track possession (one frame of credit to whichever team holds the ball)
+    if (ball.possessedBy) stats[ball.possessedBy.team].possessionFrames++;
+  }
+
+  function startCountdown() {
+    gameState = 'countdown';
+    countdownFrames = COUNTDOWN_DURATION;
+    countdownEl.classList.add('visible');
+    updateCountdownDisplay();
+  }
+
+  function startGoalPause() {
+    gameState = 'goalPause';
+    countdownFrames = 90; // 1.5 seconds celebration, then countdown begins
+    ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.vz = 0; ball.z = 0;
+  }
+
+  function updateCountdownDisplay() {
+    if (gameState !== 'countdown') return;
+    // 3 → 2 → 1 → GO! over 180 frames
+    const elapsed = COUNTDOWN_DURATION - countdownFrames;
+    if (elapsed < 60) countdownEl.textContent = '3';
+    else if (elapsed < 120) countdownEl.textContent = '2';
+    else if (elapsed < 170) countdownEl.textContent = '1';
+    else countdownEl.textContent = 'GO!';
   }
 
   function render() {
@@ -1597,6 +1844,7 @@
   // Kick it off
   setupPlayers();
   kickoff();
+  startCountdown();
   requestAnimationFrame(loop);
 })();
 </script>
