@@ -142,7 +142,7 @@
     <div id="timer">02:00</div>
     <button id="lobToggle">LOB</button>
   </div>
-  <div id="version-tag">V20</div>
+  <div id="version-tag">V21</div>
 </div>
 
 <script>
@@ -701,7 +701,17 @@
   // ============================================================
   function updateAI(p) {
     if (p.isUser) return;
-    if (p.stunned > 0) { p.stunned--; return; }
+    if (p.stunned > 0) {
+      // Still apply velocity/drag while stunned so a tackle bump actually
+      // pushes them out of contact — but don't run any AI logic
+      p.stunned--;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.86;
+      p.vy *= 0.86;
+      clampPlayerToField(p);
+      return;
+    }
 
     let tx, ty;
     const isHomeTeam = p.team === 'home';
@@ -729,42 +739,30 @@
       const laneSide = p.homeX < W/2 ? -1 : 1;
       const distToBall = Math.hypot(p.x - ball.x, p.y - ball.y);
 
-      // Count teammates closer to the ball than me — used to decide whether
-      // I should go chase the ball (engage) or hold shape.
-      let teammatesCloserToBall = 0;
-      for (const mate of players) {
-        if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
-        const md = Math.hypot(mate.x - ball.x, mate.y - ball.y);
-        if (md < distToBall) teammatesCloserToBall++;
-      }
+      // Rank outfield teammates by distance to ball. Rank 0 = closest.
+      // Used by the defensive pressure scheme below: ranks 0 and 1 pressure,
+      // rank 2 stays back as the last defender.
+      const outfielders = players.filter(mm =>
+        mm.team === p.team && mm.role !== 'keeper'
+      );
+      outfielders.sort((a, b) =>
+        Math.hypot(a.x - ball.x, a.y - ball.y) -
+        Math.hypot(b.x - ball.x, b.y - ball.y)
+      );
+      const ballRank = outfielders.indexOf(p); // 0, 1, or 2
 
-      // BALL-FIRST override with HYSTERESIS.
-      // Engage rules (looser — teammates actively go for the ball):
-      //  - Loose ball: closest teammate always; any teammate within 180 also
-      //  - Opponent possession: closest teammate always; 2nd closest if < 200
-      //  - Hysteresis: once engaging, keep engaging until far (>320) or
-      //    teammate regains possession
-      let engageBall = p._engaging || false;
-      if (engageBall) {
-        if (ourPossession) engageBall = false;
-        else if (distToBall > 320) engageBall = false;
-      } else {
-        if (!ballCarrier) {
-          if (teammatesCloserToBall === 0) engageBall = true;
-          else if (distToBall < 180) engageBall = true;
-        } else if (ballCarrier.team !== p.team) {
-          if (teammatesCloserToBall === 0) engageBall = true;
-          else if (teammatesCloserToBall === 1 && distToBall < 200) engageBall = true;
-        }
+      let engageBall = false;
+      if (!ballCarrier) {
+        // Loose ball — top 2 closest go for it
+        engageBall = ballRank <= 1;
+      } else if (!ourPossession) {
+        // Enemy has ball — two-man pressure, one defender held back
+        engageBall = ballRank <= 1;
       }
       p._engaging = engageBall;
 
-      if (engageBall) {
-        // Lead the ball — chase where it will be, not where it is
-        tx = ball.x + ball.vx * 6;
-        ty = ball.y + ball.vy * 6;
-      } else if (ourPossession) {
-        // OFFENSE: hold position based on SMOOTHED ball (not jittering)
+      if (ourPossession) {
+        // OFFENSE: hold position based on SMOOTHED ball
         if (p.role === 'defender') {
           tx = p.homeX;
           ty = smoothedBall.y - forward * 110;
@@ -775,16 +773,36 @@
           const offsideY = isHomeTeam ? 95 : H - 95;
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
-      } else {
-        // DEFENSE — shape role (not the engager)
-        if (p.role === 'defender') {
-          tx = p.homeX * 0.55 + smoothedBall.x * 0.45;
-          ty = (smoothedBall.y + ownGoalY) / 2;
-          ty = ty * 0.6 + p.homeY * 0.4;
+      } else if (ballRank === 0) {
+        // CLOSEST: close down the ball, leading by its velocity
+        tx = ball.x + ball.vx * 6;
+        ty = ball.y + ball.vy * 6;
+      } else if (ballRank === 1) {
+        if (!ballCarrier) {
+          // Loose ball — rank 1 also chases, offset to avoid stacking
+          const closest = outfielders[0];
+          const offset = closest && closest.x < ball.x ? 25 : -25;
+          tx = ball.x + ball.vx * 6 + offset;
+          ty = ball.y + ball.vy * 6;
         } else {
+          // Enemy has ball — SUPPORT PRESSURE from an angle to cut pass lanes
+          const closest = outfielders[0];
+          const supportSide = closest && closest.x < ball.x ? 1 : -1;
+          tx = ball.x + supportSide * 60;
+          ty = ball.y + forward * (-90); // 90 units goal-side
+          ty = isHomeTeam ? Math.min(H - 80, ty) : Math.max(80, ty);
+        }
+      } else {
+        // LAST DEFENDER: hold back, own lane, between ball and goal
+        if (p.role === 'defender') {
+          tx = p.homeX * 0.65 + smoothedBall.x * 0.35;
+          ty = (smoothedBall.y + ownGoalY) / 2;
+          ty = ty * 0.55 + p.homeY * 0.45;
+        } else {
+          // Rank 2 striker — hold forward outlet for counters
           tx = W/2 + laneSide * 110;
-          ty = smoothedBall.y + forward * 110;
-          ty = isHomeTeam ? Math.min(H * 0.48, ty) : Math.max(H * 0.52, ty);
+          ty = smoothedBall.y + forward * 130;
+          ty = isHomeTeam ? Math.min(H * 0.45, ty) : Math.max(H * 0.55, ty);
         }
       }
     }
@@ -984,39 +1002,42 @@
       const contactDist = p.r + carrier.r + 10;
 
       if (d < contactDist) {
-        // TACKLE — transfer possession, bump old carrier back, stun
+        // TACKLE — transfer possession, shove old carrier clear, stun
         const bumpX = d > 0.01 ? -dx / d : 0;
         const bumpY = d > 0.01 ? -dy / d : 0;
 
-        // Bump old carrier back ~ball radius + reset velocity away from tackler
-        carrier.vx = bumpX * 3.2;
-        carrier.vy = bumpY * 3.2;
-        carrier.stunned = 22;
+        // Immediate position shove so players aren't still overlapping after
+        // the transfer (otherwise they tackle back once immunity expires)
+        const shoveDist = 18;
+        carrier.x += bumpX * shoveDist;
+        carrier.y += bumpY * shoveDist;
+        clampPlayerToField(carrier);
 
-        // Also nudge tackler a bit so they don't feel weightless
+        // Residual velocity so the bump reads as a push, plus stun
+        carrier.vx = bumpX * 3.6;
+        carrier.vy = bumpY * 3.6;
+        carrier.stunned = 28;
+
+        // Small forward nudge on the tackler for weight
         p.vx += -bumpX * 0.8;
         p.vy += -bumpY * 0.8;
 
         // Transfer possession
         ball.possessedBy = p;
-        // Place ball in front of the new carrier (dribble offset ahead of facing)
         ball.x = p.x + Math.cos(p.facing) * DRIBBLE_OFFSET;
         ball.y = p.y + Math.sin(p.facing) * DRIBBLE_OFFSET;
         ball.vx = 0; ball.vy = 0; ball.vz = 0; ball.z = 0;
         ball.spin = 0;
 
-        // Immunity so the ball doesn't flip on the very next frame
-        p._tackleImmune = 14;
-
-        // Reset AI kick cooldown so they can actually use the new possession
+        // Long immunity so the stunned carrier can't tackle straight back
+        p._tackleImmune = 40;
         p._kickCooldown = 0;
 
-        // Visual feedback — only flash on notable tackles (user involved)
         if (carrier.isUser || p.isUser) {
           flashText(carrier.isUser ? 'TACKLED!' : 'TACKLE!', '#ff9f40');
         }
 
-        break; // one tackle per step
+        break;
       }
     }
   }
