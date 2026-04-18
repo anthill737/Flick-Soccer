@@ -362,7 +362,7 @@
   <button id="lobToggle">LOB</button>
   <button id="tackleBtn">TACKLE</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.5d</div>
+  <div id="version-tag">v3.6.5e</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1344,6 +1344,10 @@
         const mySide = p.homeX < W/2 ? -1 : 1;
 
         if (p.role === 'defender') {
+          // The two "defenders" are really positional midfielders — they
+          // support the attack during own possession and cover during
+          // defense. Same-side player overlaps the wing; opposite-side
+          // player makes a dynamic support run off the striker.
           const shouldOverlap = ballInOppHalf && mySide === ballSide;
           if (shouldOverlap) {
             // Push up the flank — arrive near the ball to offer an outlet
@@ -1351,12 +1355,35 @@
             ty = smoothedBall.y + forward * 30;
             // Don't cross the opponent penalty box line
             ty = isHomeTeam ? Math.max(130, ty) : Math.min(H - 130, ty);
-          } else if (!ballInOppHalf) {
-            // PLAYING OUT FROM OWN HALF — defenders push up toward
-            // midfield to offer a real forward outlet. Depth-scaled:
-            // +160px when ball is at own goal line, +100px at midfield,
-            // linear between. Clamped to 40px past midfield (existing
-            // formation buffer) so defenders never commit past that.
+          } else if (ballInOppHalf) {
+            // OPPOSITE-SIDE SUPPORT RUN in the attacking half — phase-
+            // cycled so the run isn't static. Trail the carrier by
+            // 20-80px (behind in attack direction) and oscillate between
+            // central and wide lanes on the opposite wing, offering a
+            // short outlet so the striker isn't left alone. Cycle ~6s,
+            // per-player phase so the two teams desynchronize.
+            const phase = (performance.now() / 1000 + p.homeX * 0.003) % 6;
+            let trail, lateral;
+            if (phase < 2) {
+              // HOLD wide — trailing, ready for a switch-of-play pass
+              trail = 80; lateral = 150;
+            } else if (phase < 4) {
+              // UNDERLAP — drive into the central channel, closer to ball
+              trail = 20; lateral = 50;
+            } else {
+              // DRIFT wide — stretch the defense, trailing mid-depth
+              trail = 50; lateral = 180;
+            }
+            tx = W/2 + mySide * lateral;
+            ty = smoothedBall.y - forward * trail;
+            // Don't overrun the penalty area, and don't drop past midfield
+            // by more than 40px (existing formation buffer).
+            ty = isHomeTeam ? Math.max(100, Math.min(H/2 + 40, ty))
+                            : Math.min(H - 100, Math.max(H/2 - 40, ty));
+          } else {
+            // Ball in OWN HALF — push up to midfield to offer a forward
+            // outlet. Depth-scaled: +160px when ball is at own goal line,
+            // +100px at midfield. Clamped to 40px past midfield.
             const ballDepthFrac = isHomeTeam
               ? Math.max(0, Math.min(1, (smoothedBall.y - H/2) / (H/2)))
               : Math.max(0, Math.min(1, (H/2 - smoothedBall.y) / (H/2)));
@@ -1364,11 +1391,6 @@
             tx = p.homeX * 0.7 + smoothedBall.x * 0.3;
             ty = smoothedBall.y + forward * pushAhead;
             ty = isHomeTeam ? Math.max(H/2 - 40, ty) : Math.min(H/2 + 40, ty);
-          } else {
-            // Cover: hold the back line while the other defender overlaps
-            tx = p.homeX * 0.8 + smoothedBall.x * 0.2;
-            ty = smoothedBall.y - forward * 130;
-            ty = isHomeTeam ? Math.max(H * 0.55, ty) : Math.min(H * 0.45, ty);
           }
         } else if (p === ball.possessedBy) {
           // I HAVE THE BALL — carry it toward the attacking goal, with
