@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.3</div>
+  <div id="version-tag">v3.6.4</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -467,6 +467,10 @@
   const KEEPER_BOX_DEPTH = 140;         // px the box extends from the goal-line into the field
   const KEEPER_BOX_WIDTH = 240;         // total box width (±120 from W/2)
   const KEEPER_RELEASE = 80;            // ball may be this far outside the box before keeper leaves it
+
+  // Tackle miss — whiffed tackles when the carrier dodges sideways
+  const TACKLE_MISS_COOLDOWN = 50;      // frames of no-tackle after a whiff
+  const TACKLE_MISS_SLUGGISH = 30;      // frames of slow recovery on the whiffer
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -1685,6 +1689,31 @@
         const bumpX = d > 0.01 ? -dx / d : 0;
         const bumpY = d > 0.01 ? -dy / d : 0;
 
+        // MISS: the carrier is dodging roughly perpendicular to our
+        // approach. Tackler lunges past, no possession change.
+        // Detection: |dot(approachDir, carrierVelDir)| < 0.25 AND
+        // carrier speed > 1.5. (Heading-on or straight-away are not
+        // misses — they're committed contact.)
+        const carrierSpeed = Math.hypot(carrier.vx, carrier.vy);
+        if (carrierSpeed > 1.5 && d > 0.01) {
+          const approachX = dx / d, approachY = dy / d;
+          const carDirX = carrier.vx / carrierSpeed;
+          const carDirY = carrier.vy / carrierSpeed;
+          const dot = approachX * carDirX + approachY * carDirY;
+          if (Math.abs(dot) < 0.25) {
+            // Whiff — tackler keeps momentum past the carrier, pays a
+            // long cooldown + brief sluggish, carrier keeps the ball.
+            p.vx += approachX * 0.6;
+            p.vy += approachY * 0.6;
+            p._tackleCooldown = TACKLE_MISS_COOLDOWN;
+            p._sluggish = TACKLE_MISS_SLUGGISH;
+            if (p.isUser || carrier.isUser) {
+              flashText(p.isUser ? 'MISSED!' : 'DODGED', '#aaa');
+            }
+            break; // only one interaction per tackle pass
+          }
+        }
+
         // Immediate position shove so players aren't still overlapping after
         // the transfer (otherwise they tackle back once immunity expires)
         const shoveDist = 18;
@@ -1975,7 +2004,11 @@
         //  - Faster balls that are still in flight deflect.
         const ballSpeed = Math.hypot(ball.vx, ball.vy);
         const isShooterCooldown = ball._lastKicker === p && (ball._kickCooldown || 0) > 0;
-        if (ballSpeed < 5.5 && !isShooterCooldown) {
+        // Tackle-cooldown also blocks loose-ball pickup. The player
+        // still physically contacts the ball (the deflect branch below
+        // handles fast balls), but they can't gain possession.
+        const hasTackleCooldown = (p._tackleCooldown || 0) > 0;
+        if (ballSpeed < 5.5 && !isShooterCooldown && !hasTackleCooldown) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
           // Settle window so the receiver isn't tackled the instant
