@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.2</div>
+  <div id="version-tag">v3.6.3</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -460,6 +460,13 @@
   // outfielders never clump into the same pixel.
   const TEAMMATE_REPEL_RADIUS = 60;     // px — pairs inside this radius get pushed apart
   const TEAMMATE_REPEL_MAX = 0.6;       // px/frame cap per player per pair
+
+  // Keeper leash — keeper stays in a rectangular goal-box centered
+  // on their own goal line. They only chase the ball if it's inside
+  // the box or within KEEPER_RELEASE of the box boundary.
+  const KEEPER_BOX_DEPTH = 140;         // px the box extends from the goal-line into the field
+  const KEEPER_BOX_WIDTH = 240;         // total box width (±120 from W/2)
+  const KEEPER_RELEASE = 80;            // ball may be this far outside the box before keeper leaves it
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -1133,17 +1140,31 @@
     const attackGoalY = isHomeTeam ? 6 : H - 6;
 
     if (p.role === 'keeper') {
-      // Track ball along goal line, biased toward cutting angle
-      const goalCenterY = isHomeTeam ? H - 30 : 30;
-      const goalLimitL = W/2 - GOAL_WIDTH/2 + p.r + 4;
-      const goalLimitR = W/2 + GOAL_WIDTH/2 - p.r - 4;
-      tx = Math.max(goalLimitL, Math.min(goalLimitR, ball.x));
-      ty = goalCenterY;
-      // Rush out if ball is close & in danger zone
-      const bdist = Math.hypot(ball.x - p.x, ball.y - p.y);
-      if (bdist < 140 && Math.abs(ball.y - ownGoalY) < 200) {
+      // Keeper leash: stay in a rectangular goal-box unless the ball
+      // is inside the box OR within KEEPER_RELEASE of its boundary.
+      // When inside/near, commit to the ball. Otherwise, slide laterally
+      // along the goal line to mirror ball.x clamped to the box width.
+      const boxXMin = W/2 - KEEPER_BOX_WIDTH/2;
+      const boxXMax = W/2 + KEEPER_BOX_WIDTH/2;
+      const anchorY = isHomeTeam ? H - 30 : 30;              // where keeper stands when leashed
+      const goalLineY = isHomeTeam ? H - 40 : 40;            // goal-line center
+      const boxNearY = isHomeTeam ? goalLineY - KEEPER_BOX_DEPTH : goalLineY + KEEPER_BOX_DEPTH;
+      const boxYMin = Math.min(goalLineY, boxNearY);
+      const boxYMax = Math.max(goalLineY, boxNearY);
+
+      const ballInRelease =
+        ball.x >= boxXMin - KEEPER_RELEASE && ball.x <= boxXMax + KEEPER_RELEASE &&
+        ball.y >= boxYMin - KEEPER_RELEASE && ball.y <= boxYMax + KEEPER_RELEASE;
+
+      if (ballInRelease) {
+        // Commit to the ball — this is the only situation that lets
+        // the keeper leave the box
         tx = ball.x;
         ty = ball.y + (isHomeTeam ? -15 : 15);
+      } else {
+        // Leashed: mirror ball.x laterally, clamped to box; stay at anchor y
+        tx = Math.max(boxXMin, Math.min(boxXMax, ball.x));
+        ty = anchorY;
       }
     } else {
       const ballCarrier = ball.possessedBy;
