@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.4.5</div>
+  <div id="version-tag">v3.4.6</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1312,10 +1312,10 @@
       }
     }
 
-    // GENERAL EMERGENCY PUNT: any AI that's held the ball > 2 seconds
-    // without a clean pass/shot opportunity releases it upfield. Keeps
-    // play flowing when pressing conditions prevent normal decisions.
-    if (p._possessionTime > 120) {
+    // GENERAL EMERGENCY PUNT: any AI that's held the ball > 3 seconds
+    // without a pass/shot. Softer than a keeper punt so play stays
+    // controllable (ball doesn't fly uncatchably fast).
+    if (p._possessionTime > 180) {
       let best = null, bestFwd = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
@@ -1325,13 +1325,13 @@
       if (best) {
         const dx = best.x - p.x, dy = best.y - p.y;
         const d = Math.hypot(dx, dy) || 1;
-        const power = 6.5;
+        const power = 5.0;
         ball.possessedBy = null;
         ball.x = p.x + (dx/d) * (p.r + ball.r + 2);
         ball.y = p.y + (dy/d) * (p.r + ball.r + 2);
         ball.vx = (dx/d) * power * 0.95;
         ball.vy = (dy/d) * power * 0.95;
-        ball.vz = power * 0.45; // airborne — clears defenders
+        ball.vz = power * 0.4;
         ball.z = 0;
         ball.spin = 0;
         p._kickCooldown = 60;
@@ -1392,8 +1392,8 @@
     let passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
     if (p.role === 'keeper') passProb = 0.35;
     // Scale pass probability with how long we've held the ball —
-    // the longer we're holding, the more eagerly we look to move it
-    const holdBoost = Math.min(0.15, p._possessionTime * 0.0015);
+    // modest boost so AI isn't hot-potato-ing the ball frantically
+    const holdBoost = Math.min(0.08, p._possessionTime * 0.0008);
     passProb += holdBoost;
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
@@ -1827,9 +1827,10 @@
         if (ballSpeed < 5.5 && !isShooterCooldown) {
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
-          // Brief settle window so the receiver isn't tackled the instant
-          // they trap the ball — lets them pass/dribble with purpose
-          p._tackleImmune = 18;
+          // Settle window so the receiver isn't tackled the instant
+          // they trap the ball. Longer for the user (give them time to
+          // react and flick) than for AI.
+          p._tackleImmune = p.isUser ? 45 : 20;
           flickResolved = true;
           break;
         } else if (!flickResolved) {
