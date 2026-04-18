@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.5.2</div>
+  <div id="version-tag">v3.6.0</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -445,6 +445,12 @@
   const DRIBBLE_DAMPING = 0.72;
   const POSSESSION_RADIUS = 52;
 
+  // Chaser hysteresis — prevents rank-swap flicker so only ONE
+  // defender per team commits to the ball at a time.
+  const CHASER_SWAP_MIN_GAP_PX = 28;    // challenger must be at least this many px closer
+  const CHASER_SWAP_MIN_GAP_PCT = 0.15; // OR 15% of current chaser's distance
+  const CHASER_MIN_HOLD_FRAMES = 18;    // ~0.3s minimum hold before the tag can transfer
+
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
   // ============================================================
@@ -517,6 +523,13 @@
   let hitstopFrames = 0; // slow-mo duration after tackles for impact feel
   let hitstopAltFrame = false; // toggles each step during hitstop — skip=50% speed
   let kickoffLock = false; // while true, user's first kick must be lateral or back
+  let frameCount = 0; // monotonic step counter — used by chaser-hysteresis and other sticky logic
+  // Per-team chaser: the ONE defender per side committed to the ball.
+  // Rest of the squad holds formation. Swapping requires hysteresis.
+  const chaserState = {
+    home: { playerRef: null, lockedAt: 0 },
+    away: { playerRef: null, lockedAt: 0 },
+  };
 
   // Per-match stats
   function emptyTeamStats() {
@@ -1003,6 +1016,53 @@
   // ============================================================
   // AI (teammates + opponents)
   // ============================================================
+  // Resolve each team's single ball-chaser with hysteresis. Called once
+  // per step before the per-player AI loop. A new challenger only steals
+  // the tag if they're clearly closer (big gap) AND the current chaser
+  // has held it for at least CHASER_MIN_HOLD_FRAMES. This stops the
+  // "rank-swap ping-pong" that was causing multiple defenders to
+  // converge on the ball every time positions shifted a few pixels.
+  function updateChasers() {
+    for (const team of ['home', 'away']) {
+      const outfielders = players.filter(p =>
+        p.team === team && p.role !== 'keeper'
+      );
+      if (outfielders.length === 0) continue;
+
+      let bestP = null, bestD = Infinity;
+      for (const p of outfielders) {
+        const d = Math.hypot(ball.x - p.x, ball.y - p.y);
+        if (d < bestD) { bestD = d; bestP = p; }
+      }
+
+      const state = chaserState[team];
+      const current = state.playerRef;
+
+      // No current chaser, or current is no longer a valid outfielder → assign best
+      if (!current || !outfielders.includes(current)) {
+        state.playerRef = bestP;
+        state.lockedAt = frameCount;
+        continue;
+      }
+
+      // Still minimum-hold? Keep current.
+      const heldFrames = frameCount - state.lockedAt;
+      if (heldFrames < CHASER_MIN_HOLD_FRAMES) continue;
+      if (bestP === current) continue;
+
+      const currentDist = Math.hypot(ball.x - current.x, ball.y - current.y);
+      const gap = currentDist - bestD;
+      const gapThreshold = Math.max(
+        CHASER_SWAP_MIN_GAP_PX,
+        currentDist * CHASER_SWAP_MIN_GAP_PCT
+      );
+      if (gap >= gapThreshold) {
+        state.playerRef = bestP;
+        state.lockedAt = frameCount;
+      }
+    }
+  }
+
   function updateAI(p) {
     if (p._tackleCooldown && p._tackleCooldown > 0) p._tackleCooldown--;
     if (p._recentlyGained && p._recentlyGained > 0) p._recentlyGained--;
@@ -1050,24 +1110,12 @@
       const laneSide = p.homeX < W/2 ? -1 : 1;
       const distToBall = Math.hypot(p.x - ball.x, p.y - ball.y);
 
-      // Rank outfield teammates by distance to ball. Rank 0 = closest.
-      // Used by the defensive pressure scheme below: ranks 0 and 1 pressure,
-      // rank 2 stays back as the last defender.
-      const outfielders = players.filter(mm =>
-        mm.team === p.team && mm.role !== 'keeper'
-      );
-      outfielders.sort((a, b) =>
-        Math.hypot(a.x - ball.x, a.y - ball.y) -
-        Math.hypot(b.x - ball.x, b.y - ball.y)
-      );
-      const ballRank = outfielders.indexOf(p); // 0, 1, or 2
+      // ONE chaser per team (resolved in updateChasers with hysteresis).
+      // Non-chasers hold formation instead of converging on the ball.
+      const isChaser = chaserState[p.team].playerRef === p;
 
-      // Only the single closest teammate sprints at the ball. Rank 1 moves
-      // into a support/cover position at a jog, not a full-speed pressure.
-      // Stops both pressuring players from converging and tackle-stacking.
       let engageBall = false;
-      if (!ballCarrier && ballRank === 0) engageBall = true;
-      else if (!ourPossession && ballRank === 0) engageBall = true;
+      if (!ourPossession && isChaser) engageBall = true;
       // The carrier sprints when they're in the opponent half so they
       // can drive to shooting range instead of ambling the whole field.
       const ballInOppHalfPre = isHomeTeam ? (smoothedBall.y < H * 0.5) : (smoothedBall.y > H * 0.5);
@@ -1128,18 +1176,16 @@
           const offsideY = isHomeTeam ? 95 : H - 95;
           ty = isHomeTeam ? Math.max(offsideY, ty) : Math.min(offsideY, ty);
         }
-      } else if (ballRank === 0) {
+      } else if (isChaser) {
+        // The ONE designated chaser for this team commits to the ball.
         if (!ballCarrier) {
-          // LOOSE BALL — just go get it. No positional press (there's
-          // no carrier to contain). Lead by ball velocity so we meet
-          // the ball where it's going.
+          // Loose ball — lead by velocity so we meet it where it's going
           tx = ball.x + ball.vx * 4;
           ty = ball.y + ball.vy * 4;
         } else {
-          // OPPONENT HAS BALL — press goal-side so we cut off their
-          // angle to goal instead of bodying the carrier. BUT if the
-          // carrier is barely moving (static dribble or just standing
-          // still), commit to the ball directly to force a tackle.
+          // Opponent has ball — press goal-side to cut the angle,
+          // but commit straight at a static carrier so they can't
+          // just stand there forever.
           const carrierSpeed = Math.hypot(ballCarrier.vx, ballCarrier.vy);
           if (carrierSpeed < 0.6) {
             tx = ball.x + ball.vx * 2;
@@ -1150,30 +1196,15 @@
             ty = ball.y + ball.vy * 2 + goalSideY;
           }
         }
-      } else if (ballRank === 1) {
-        if (!ballCarrier) {
-          // Loose ball — rank 1 also closes in, offset slightly so
-          // they don't stack on rank 0
-          const closest = outfielders[0];
-          const offsetX = closest && closest.x < ball.x ? 40 : -40;
-          tx = ball.x + ball.vx * 3 + offsetX;
-          ty = ball.y + ball.vy * 3;
-        } else {
-          // Opponent has ball — classic second-defender cover position
-          const closest = outfielders[0];
-          const supportSide = closest && closest.x < ball.x ? 1 : -1;
-          tx = ball.x + supportSide * 70;
-          ty = ball.y + (isHomeTeam ? 110 : -110);
-          ty = isHomeTeam ? Math.min(H - 80, ty) : Math.max(80, ty);
-        }
       } else {
-        // LAST DEFENDER: hold back, own lane, between ball and goal
+        // NON-CHASER: hold formation with a ball-based lateral shift.
+        // Defenders sit in their lane between ball and own goal;
+        // strikers hold a forward outlet for counter-attacks.
         if (p.role === 'defender') {
           tx = p.homeX * 0.65 + smoothedBall.x * 0.35;
           ty = (smoothedBall.y + ownGoalY) / 2;
           ty = ty * 0.55 + p.homeY * 0.45;
         } else {
-          // Rank 2 striker — hold forward outlet for counters
           tx = W/2 + laneSide * 110;
           ty = smoothedBall.y + forward * 130;
           ty = isHomeTeam ? Math.min(H * 0.45, ty) : Math.max(H * 0.55, ty);
@@ -2626,6 +2657,8 @@
       }
     }
 
+    frameCount++;
+
     smoothedBall.x += (ball.x - smoothedBall.x) * BALL_SMOOTH;
     smoothedBall.y += (ball.y - smoothedBall.y) * BALL_SMOOTH;
     // Advance kick animation for every player in one place (was only
@@ -2634,6 +2667,7 @@
     for (const p of players) {
       if (p.kickAnimT < p.kickAnimDur) p.kickAnimT++;
     }
+    updateChasers();
     updateUserPlayer();
     for (const p of players) updateAI(p);
     handleTackles();
