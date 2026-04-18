@@ -362,7 +362,7 @@
   <button id="lobToggle">LOB</button>
   <button id="tackleBtn">TACKLE</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.5a</div>
+  <div id="version-tag">v3.6.5c</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1671,7 +1671,9 @@
     passProb += holdBoost;
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
-    const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.68) : (p.y < H * 0.32);
+    // Thresholds per spec: home y > H*0.66, away y < H*0.33. Outside
+    // this zone, the keeper is filtered out of pass candidates below.
+    const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.66) : (p.y < H * 0.33);
 
     if (Math.random() < passProb) {
       let bestMate = null, bestScore = -Infinity;
@@ -1719,6 +1721,16 @@
         if (mate.isUser && isHomeTeam) {
           const userMoving = Math.hypot(mate.vx, mate.vy) > 0.6;
           if (userMoving) score += 12;
+        }
+
+        // Mild forward nudge (hotfix): small additive tiebreaker toward
+        // teammates further toward the opponent's goal. Keeper branch
+        // already has its own strong forward preference — skip there.
+        // Scale is ~10-15% of typical branch scores (100-250 range),
+        // so it nudges preference without overriding openness / distance.
+        if (p.role !== 'keeper') {
+          if (ahead > 20) score += 20;
+          else if (ahead < -20) score -= 15;
         }
 
         if (score > bestScore) { bestScore = score; bestMate = mate; }
