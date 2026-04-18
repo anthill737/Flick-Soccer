@@ -278,8 +278,7 @@
     font-weight: 600;
     letter-spacing: 1px;
     z-index: 2000;
-    pointer-events: auto;
-    cursor: pointer;
+    pointer-events: none;
     font-family: monospace;
   }
 
@@ -331,8 +330,8 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
+  <div id="version-tag">v3.6.1d</div>
 </div>
-<div id="version-tag">v3.6.1c</div>
 <div id="intro"></div>
 <div id="endscreen"></div>
 
@@ -536,7 +535,6 @@
     home: { playerRef: null, lockedAt: 0 },
     away: { playerRef: null, lockedAt: 0 },
   };
-  let debugOverlay = true; // START ON so we can verify it renders; tap version tag to flip
 
   // Per-match stats
   function emptyTeamStats() {
@@ -581,26 +579,6 @@
   }
   lobToggle.addEventListener('click', () => setLobMode(!lobMode));
   lobToggle.addEventListener('touchstart', e => { e.preventDefault(); setLobMode(!lobMode); }, { passive: false });
-
-  // Debug-overlay toggle — tap the version tag in the bottom-right.
-  // Mobile has no keyboard for the `D` shortcut, so this is the
-  // primary toggle for v3.6.1 diagnostics.
-  const versionTagEl = document.getElementById('version-tag');
-  if (versionTagEl) {
-    const paintTag = () => {
-      versionTagEl.style.background = debugOverlay ? 'rgba(255,216,74,0.92)' : 'rgba(0,0,0,0.55)';
-      versionTagEl.style.color = debugOverlay ? '#0a0a0a' : '#fff';
-    };
-    const toggleDebug = (e) => {
-      if (e) e.preventDefault();
-      debugOverlay = !debugOverlay;
-      paintTag();
-    };
-    // Initial paint reflects the starting state
-    paintTag();
-    versionTagEl.addEventListener('click', toggleDebug);
-    versionTagEl.addEventListener('touchstart', toggleDebug, { passive: false });
-  }
 
   // ============================================================
   // INPUT — TOUCH (left joystick, right flick zone)
@@ -708,7 +686,6 @@
     input.keys[e.key.toLowerCase()] = true;
     if (e.key === 'Shift') input.keys['shift'] = true;
     if (e.key === ' ') { e.preventDefault(); setLobMode(!lobMode); }
-    if (e.key.toLowerCase() === 'd') { debugOverlay = !debugOverlay; }
     if (['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault();
   });
   window.addEventListener('keyup', e => {
@@ -2195,31 +2172,6 @@
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(lx, ly); ctx.stroke();
       ctx.fillStyle = '#1a1a1a';
       ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI*2); ctx.fill();
-    }
-
-    // DEBUG overlay — formation-shift diagnostics. Toggle by tapping
-    // the version tag. Text sized for phone readability.
-    if (debugOverlay && !p.isUser && p.role !== 'keeper') {
-      const shift = p._formationShift !== undefined ? p._formationShift : 0;
-      const targetY = p.homeY + shift;
-      const clamped = p.team === 'home'
-        ? Math.max(H/2 - 40, targetY)
-        : Math.min(H/2 + 40, targetY);
-      const isChaser = chaserState[p.team] && chaserState[p.team].playerRef === p;
-      ctx.save();
-      ctx.font = 'bold 12px monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      // Solid black backing so it's legible against the pitch
-      ctx.fillStyle = 'rgba(0,0,0,0.85)';
-      ctx.fillRect(p.x - 48, p.y - 62, 96, 46);
-      ctx.fillStyle = isChaser ? '#ff6b4a' : '#ffd84a';
-      ctx.fillText(isChaser ? 'CHASER' : ('s ' + shift.toFixed(0)), p.x, p.y - 48);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText('h ' + p.homeY.toFixed(0), p.x, p.y - 34);
-      ctx.fillStyle = '#4ecd6a';
-      ctx.fillText('y ' + clamped.toFixed(0), p.x, p.y - 20);
-      ctx.restore();
     }
   }
 
