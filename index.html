@@ -90,6 +90,37 @@
     border-color: #ffd84a;
     box-shadow: 0 0 16px rgba(255,216,74,0.7);
   }
+  #tackleBtn {
+    position: fixed;
+    right: 4px;
+    bottom: calc(22% + 64px);  /* stacked 10px above #lobToggle */
+    width: 54px;
+    height: 54px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.55);
+    color: #ff8866;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border: 2px solid rgba(255,107,74,0.7);
+    pointer-events: auto;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #tackleBtn::before {
+    content: '';
+    position: absolute;
+    inset: -22px;
+  }
+  #tackleBtn.cooldown { opacity: 0.4; }
+  #tackleBtn.firing {
+    background: #ff6b4a;
+    color: #fff;
+    box-shadow: 0 0 18px rgba(255,107,74,0.8);
+  }
   /* Countdown overlay */
   #countdown {
     position: fixed;
@@ -329,8 +360,9 @@
     <div id="timer">02:00</div>
   </div>
   <button id="lobToggle">LOB</button>
+  <button id="tackleBtn">TACKLE</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.4</div>
+  <div id="version-tag">v3.6.5</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -400,6 +432,7 @@
   const scoreAwayEl = document.getElementById('scoreAway');
   const timerEl = document.getElementById('timer');
   const lobToggle = document.getElementById('lobToggle');
+  const tackleBtn = document.getElementById('tackleBtn');
   const countdownEl = document.getElementById('countdown');
   const endscreenEl = document.getElementById('endscreen');
   const introEl = document.getElementById('intro');
@@ -471,6 +504,16 @@
   // Tackle miss — whiffed tackles when the carrier dodges sideways
   const TACKLE_MISS_COOLDOWN = 50;      // frames of no-tackle after a whiff
   const TACKLE_MISS_SLUGGISH = 30;      // frames of slow recovery on the whiffer
+
+  // Slide tackle — user-only deliberate steal action
+  const SLIDE_DURATION = 22;            // ~0.37s of committed forward slide
+  const SLIDE_SPEED_MULT = 1.4;         // multiplier on sprint max speed during slide
+  const SLIDE_STAMINA_COST = 25;        // stamina paid on activation
+  const SLIDE_STAMINA_MIN = 15;         // can't slide below this stamina
+  const SLIDE_CONTACT_BONUS = 8;        // extra px reach beyond r+r
+  const SLIDE_HIT_COOLDOWN = 20;        // ~0.33s cooldown after a successful slide
+  const SLIDE_MISS_COOLDOWN = 60;       // ~1s punishment cooldown on a whiff
+  const SLIDE_MISS_SLUGGISH = 45;       // slow-recovery frames on a whiff
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -596,6 +639,30 @@
   lobToggle.addEventListener('click', () => setLobMode(!lobMode));
   lobToggle.addEventListener('touchstart', e => { e.preventDefault(); setLobMode(!lobMode); }, { passive: false });
 
+  // Slide-tackle action — committed forward slide along the user's
+  // facing direction. Steals the ball on contact with an opponent
+  // carrier, or knocks any opponent; whiffs with a punishment cooldown
+  // if it finishes without contact.
+  function attemptSlideTackle() {
+    if (!userPlayer) return;
+    if ((userPlayer._tackleCooldown || 0) > 0) return;
+    if (ball.possessedBy === userPlayer) return;
+    if (userPlayer.stamina < SLIDE_STAMINA_MIN) return;
+    if (kickoffLock) return;
+    if (hitstopFrames > 0) return;
+    if ((userPlayer._sliding || 0) > 0) return;
+    userPlayer.stamina -= SLIDE_STAMINA_COST;
+    userPlayer._sliding = SLIDE_DURATION;
+    userPlayer._slideHit = false;
+    userPlayer._slideDirX = Math.cos(userPlayer.facing);
+    userPlayer._slideDirY = Math.sin(userPlayer.facing);
+  }
+
+  if (tackleBtn) {
+    tackleBtn.addEventListener('click', attemptSlideTackle);
+    tackleBtn.addEventListener('touchstart', e => { e.preventDefault(); attemptSlideTackle(); }, { passive: false });
+  }
+
   // ============================================================
   // INPUT — TOUCH (left joystick, right flick zone)
   // ============================================================
@@ -702,6 +769,7 @@
     input.keys[e.key.toLowerCase()] = true;
     if (e.key === 'Shift') input.keys['shift'] = true;
     if (e.key === ' ') { e.preventDefault(); setLobMode(!lobMode); }
+    if (e.key.toLowerCase() === 'f') { e.preventDefault(); attemptSlideTackle(); }
     if (['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault();
   });
   window.addEventListener('keyup', e => {
@@ -953,6 +1021,82 @@
   // ============================================================
   function updateUserPlayer() {
     if (ball.possessedBy === userPlayer) userPlayer._lastPossessAt = performance.now();
+
+    // SLIDE TACKLE — committed forward motion along slide direction.
+    // Overrides joystick input. Contacts steal ball from an opposing
+    // carrier OR knock any opponent. Resolves to hit/miss cooldowns
+    // when the duration expires or contact ends it early.
+    if ((userPlayer._sliding || 0) > 0) {
+      userPlayer._sliding--;
+      const slideSpeed = PLAYER_SPRINT_MAX * SLIDE_SPEED_MULT;
+      userPlayer.vx = userPlayer._slideDirX * slideSpeed;
+      userPlayer.vy = userPlayer._slideDirY * slideSpeed;
+      userPlayer.x += userPlayer.vx;
+      userPlayer.y += userPlayer.vy;
+      // Motion-blur trail: small red particles at current position
+      particles.push({
+        x: userPlayer.x, y: userPlayer.y,
+        vx: -userPlayer._slideDirX * 0.5, vy: -userPlayer._slideDirY * 0.5,
+        color: '#ff6b4a', life: 12, size: 4 + Math.random() * 2,
+      });
+      // Contact check against opponents
+      for (const opp of players) {
+        if (opp === userPlayer) continue;
+        if (opp.team === userPlayer.team) continue;
+        if (opp.stunned > 0) continue;
+        const dx = opp.x - userPlayer.x, dy = opp.y - userPlayer.y;
+        const d = Math.hypot(dx, dy);
+        const reach = userPlayer.r + opp.r + SLIDE_CONTACT_BONUS;
+        if (d < reach) {
+          userPlayer._slideHit = true;
+          // Shockwave at midpoint
+          shockwaves.push({
+            x: (userPlayer.x + opp.x) / 2,
+            y: (userPlayer.y + opp.y) / 2,
+            r: 6, maxR: 70, life: 24, maxLife: 24,
+          });
+          const nx = d > 0.01 ? dx / d : 0, ny = d > 0.01 ? dy / d : 0;
+          if (ball.possessedBy === opp) {
+            // Steal the ball from the carrier
+            ball.possessedBy = userPlayer;
+            ball.x = userPlayer.x + userPlayer._slideDirX * DRIBBLE_OFFSET;
+            ball.y = userPlayer.y + userPlayer._slideDirY * DRIBBLE_OFFSET;
+            ball.vx = 0; ball.vy = 0; ball.vz = 0; ball.z = 0;
+            ball.spin *= 0.4;
+            opp.stunned = 28;
+            opp._sluggish = 40;
+            opp.vx = nx * 3.6; opp.vy = ny * 3.6;
+            userPlayer._tackleImmune = 45;
+            stats.home.tackles++;
+            flashText('SLIDE STEAL', '#ff9f40');
+            // End slide early on successful steal — user exits into
+            // normal possession control next frame
+            userPlayer._sliding = 0;
+            break;
+          } else {
+            // Knock opponent (no ball to take)
+            opp.stunned = 22;
+            opp._sluggish = 30;
+            opp.vx = nx * 3.0; opp.vy = ny * 3.0;
+            stats.home.tackles++;
+            // Keep sliding — user can still hit another opponent
+            // during the remaining frames
+          }
+        }
+      }
+      clampPlayerToField(userPlayer);
+      // Resolve end of slide (natural expiry OR steal-forced exit)
+      if (userPlayer._sliding <= 0) {
+        if (userPlayer._slideHit) {
+          userPlayer._tackleCooldown = SLIDE_HIT_COOLDOWN;
+        } else {
+          userPlayer._tackleCooldown = SLIDE_MISS_COOLDOWN;
+          userPlayer._sluggish = SLIDE_MISS_SLUGGISH;
+          flashText('MISS', '#888');
+        }
+      }
+      return; // skip joystick/accel/facing this frame
+    }
 
     let inX = 0, inY = 0;
     let sprintInput = false;
@@ -2781,6 +2925,13 @@
     updateUserPlayer();
     for (const p of players) updateAI(p);
     resolveTeammateRepulsion();
+    // Sync tackle-button visual state once per playing step
+    if (tackleBtn) {
+      const sliding = (userPlayer._sliding || 0) > 0;
+      const cooling = (userPlayer._tackleCooldown || 0) > 0;
+      tackleBtn.classList.toggle('firing', sliding);
+      tackleBtn.classList.toggle('cooldown', !sliding && cooling);
+    }
     handleTackles();
     dribbleBall();
     updateBall();
