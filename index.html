@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.7-dbg2</div>
+  <div id="version-tag">v3.6.8</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1668,8 +1668,18 @@
       }
     }
 
-    const dx = (tx - p.x) + sepX;
-    const dy = (ty - p.y) + sepY;
+    // Raw target vector — what the player WANTS to do.
+    const rawDx = tx - p.x;
+    const rawDy = ty - p.y;
+    const rawD = Math.hypot(rawDx, rawDy);
+    // Composed vector — what the player actually executes, including
+    // same-team separation and opponent body-contact push. Sep forces
+    // participate in movement but MUST NOT gate whether movement happens;
+    // that caused the v3.6.7 freeze bug where sep cancelled the target
+    // vector and the composed d dropped under deadZone even when the
+    // player was nowhere near their slot.
+    const dx = rawDx + sepX;
+    const dy = rawDy + sepY;
     const d = Math.hypot(dx, dy);
 
     // Speed: walk when holding position; sprint when engaging, but only
@@ -1718,8 +1728,11 @@
     // wide when holding a position so players visibly "stand" in their zone.
     const deadZone = p._engaging ? 6 : 32;
 
+    // Gate on RAW target distance, not composed d. Player moves if they
+    // are not at their target, regardless of sep. Direction of movement
+    // still uses composed (dx, dy) so sep actually steers around teammates.
     let tvx = 0, tvy = 0;
-    if (d > deadZone) {
+    if (rawD > deadZone) {
       tvx = (dx / d) * speedLimit;
       tvy = (dy / d) * speedLimit;
     }
