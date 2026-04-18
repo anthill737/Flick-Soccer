@@ -362,7 +362,7 @@
   <button id="lobToggle">LOB</button>
   <button id="tackleBtn">TACKLE</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.5c</div>
+  <div id="version-tag">v3.6.5d</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1351,6 +1351,19 @@
             ty = smoothedBall.y + forward * 30;
             // Don't cross the opponent penalty box line
             ty = isHomeTeam ? Math.max(130, ty) : Math.min(H - 130, ty);
+          } else if (!ballInOppHalf) {
+            // PLAYING OUT FROM OWN HALF — defenders push up toward
+            // midfield to offer a real forward outlet. Depth-scaled:
+            // +160px when ball is at own goal line, +100px at midfield,
+            // linear between. Clamped to 40px past midfield (existing
+            // formation buffer) so defenders never commit past that.
+            const ballDepthFrac = isHomeTeam
+              ? Math.max(0, Math.min(1, (smoothedBall.y - H/2) / (H/2)))
+              : Math.max(0, Math.min(1, (H/2 - smoothedBall.y) / (H/2)));
+            const pushAhead = 100 + 60 * ballDepthFrac;
+            tx = p.homeX * 0.7 + smoothedBall.x * 0.3;
+            ty = smoothedBall.y + forward * pushAhead;
+            ty = isHomeTeam ? Math.max(H/2 - 40, ty) : Math.min(H/2 + 40, ty);
           } else {
             // Cover: hold the back line while the other defender overlaps
             tx = p.homeX * 0.8 + smoothedBall.x * 0.2;
@@ -1675,6 +1688,31 @@
     // this zone, the keeper is filtered out of pass candidates below.
     const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.66) : (p.y < H * 0.33);
 
+    // Compute carrier pressure once — used by rule 3 (dribble gate)
+    // and rule 1 (forward-bias scaling). Omni-directional 120px bubble.
+    let carrierNearestOpp = Infinity;
+    for (const opp of players) {
+      if (opp.team === p.team) continue;
+      const od = Math.hypot(opp.x - p.x, opp.y - p.y);
+      if (od < carrierNearestOpp) carrierNearestOpp = od;
+    }
+
+    // Rule 3: truly-unpressured dribble. When a non-keeper carrier has
+    // NO opponent within 120px AND at least 200px of field between them
+    // and the opponent goal line, skip the pass attempt this frame —
+    // the carrier's movement target is already set toward the goal in
+    // updateAI, so they dribble forward naturally.
+    if (p.role !== 'keeper') {
+      const fieldAhead = isHomeTeam ? p.y : (H - p.y);
+      if (carrierNearestOpp > 120 && fieldAhead > 200) return;
+    }
+
+    // Pressure scale for rule 1: 0 when tightly marked (<60px),
+    // ramping to 1 when unpressured (>150px). Linear between.
+    const pressureScale = carrierNearestOpp < 60 ? 0
+      : carrierNearestOpp > 150 ? 1
+      : (carrierNearestOpp - 60) / 90;
+
     if (Math.random() < passProb) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
@@ -1723,14 +1761,18 @@
           if (userMoving) score += 12;
         }
 
-        // Mild forward nudge (hotfix): small additive tiebreaker toward
-        // teammates further toward the opponent's goal. Keeper branch
-        // already has its own strong forward preference — skip there.
-        // Scale is ~10-15% of typical branch scores (100-250 range),
-        // so it nudges preference without overriding openness / distance.
+        // Rule 1: pressure-scaled forward bias. When carrier is
+        // unpressured, strong preference for teammates further toward
+        // the opponent's goal. When pressured, bias fades toward 1.0
+        // (keep possession > progression). Keeper branch already has
+        // its own -200 backpass penalty — skip there.
+        // Unpressured: 1.8x forward / 0.5x backward.
+        // Tight pressure: 1.0x (no effect).
         if (p.role !== 'keeper') {
-          if (ahead > 20) score += 20;
-          else if (ahead < -20) score -= 15;
+          let forwardMult = 1.0;
+          if (ahead > 20) forwardMult = 1.0 + 0.8 * pressureScale;
+          else if (ahead < -20) forwardMult = 1.0 - 0.5 * pressureScale;
+          score = score >= 0 ? score * forwardMult : score / forwardMult;
         }
 
         if (score > bestScore) { bestScore = score; bestMate = mate; }
