@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.1</div>
+  <div id="version-tag">v3.6.1a</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -535,6 +535,7 @@
     home: { playerRef: null, lockedAt: 0 },
     away: { playerRef: null, lockedAt: 0 },
   };
+  let debugOverlay = false; // toggle with 'D' — renders formation-shift info on non-chasers
 
   // Per-match stats
   function emptyTeamStats() {
@@ -686,6 +687,7 @@
     input.keys[e.key.toLowerCase()] = true;
     if (e.key === 'Shift') input.keys['shift'] = true;
     if (e.key === ' ') { e.preventDefault(); setLobMode(!lobMode); }
+    if (e.key.toLowerCase() === 'd') { debugOverlay = !debugOverlay; }
     if (['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault();
   });
   window.addEventListener('keyup', e => {
@@ -2172,6 +2174,34 @@
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(lx, ly); ctx.stroke();
       ctx.fillStyle = '#1a1a1a';
       ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI*2); ctx.fill();
+    }
+
+    // DEBUG overlay — formation-shift diagnostics on non-chasers.
+    // Toggle with `D`. Shows shift / homeY / targetY above each player
+    // that isn't currently their team's chaser.
+    if (debugOverlay && !p.isUser && p.role !== 'keeper') {
+      const isChaser = chaserState[p.team] && chaserState[p.team].playerRef === p;
+      if (!isChaser) {
+        const shift = p._formationShift !== undefined ? p._formationShift : 0;
+        const targetY = p.homeY + shift;
+        // Clamp preview to match the defensive non-chaser branch
+        const clamped = p.team === 'home'
+          ? Math.max(H/2 - 40, targetY)
+          : Math.min(H/2 + 40, targetY);
+        ctx.save();
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(p.x - 40, p.y - 42, 80, 30);
+        ctx.fillStyle = '#ffd84a';
+        ctx.fillText('shift ' + shift.toFixed(0), p.x, p.y - 32);
+        ctx.fillStyle = '#fff';
+        ctx.fillText('home ' + p.homeY.toFixed(0), p.x, p.y - 22);
+        ctx.fillStyle = '#4ecd6a';
+        ctx.fillText('ty ' + clamped.toFixed(0), p.x, p.y - 12);
+        ctx.restore();
+      }
     }
   }
 
