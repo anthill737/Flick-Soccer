@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.1d</div>
+  <div id="version-tag">v3.6.2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -455,6 +455,11 @@
   // defending deep, push up when the ball is in the opposing half.
   const FORMATION_SHIFT_MAX = 180;      // max px a non-chaser drifts from homeY toward the ball
   const FORMATION_SHIFT_SMOOTHING = 0.04; // lerp rate (per frame) of each player's _formationShift toward target
+
+  // Teammate repulsion — position-correction pass so same-team
+  // outfielders never clump into the same pixel.
+  const TEAMMATE_REPEL_RADIUS = 60;     // px — pairs inside this radius get pushed apart
+  const TEAMMATE_REPEL_MAX = 0.6;       // px/frame cap per player per pair
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -1066,6 +1071,38 @@
         state.lockedAt = frameCount;
       }
     }
+  }
+
+  // Position-correction pass: push same-team player pairs apart so
+  // they don't clump. Pure x/y adjustment — doesn't touch vx/vy —
+  // applied AFTER per-player velocity integration but BEFORE any
+  // field clamping in the step() loop.
+  // Skips: user (don't fight their input), stunned players, keepers.
+  function resolveTeammateRepulsion() {
+    const n = players.length;
+    for (let i = 0; i < n; i++) {
+      const a = players[i];
+      if (a.isUser || a.stunned > 0 || a.role === 'keeper') continue;
+      for (let j = i + 1; j < n; j++) {
+        const b = players[j];
+        if (b.isUser || b.stunned > 0 || b.role === 'keeper') continue;
+        if (a.team !== b.team) continue;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const d = Math.hypot(dx, dy);
+        if (d >= TEAMMATE_REPEL_RADIUS || d < 0.001) continue;
+        const strength = (TEAMMATE_REPEL_RADIUS - d) / TEAMMATE_REPEL_RADIUS;
+        const push = Math.min(TEAMMATE_REPEL_MAX, strength * TEAMMATE_REPEL_MAX);
+        const nx = dx / d, ny = dy / d;
+        a.x += nx * push;
+        a.y += ny * push;
+        b.x -= nx * push;
+        b.y -= ny * push;
+      }
+    }
+    // Re-clamp everyone since we just nudged positions outside
+    // their per-player clamp pass
+    for (const p of players) clampPlayerToField(p);
   }
 
   function updateAI(p) {
@@ -2689,6 +2726,7 @@
     updateChasers();
     updateUserPlayer();
     for (const p of players) updateAI(p);
+    resolveTeammateRepulsion();
     handleTackles();
     dribbleBall();
     updateBall();
