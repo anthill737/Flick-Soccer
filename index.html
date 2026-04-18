@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.5.0</div>
+  <div id="version-tag">v3.5.1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1833,6 +1833,11 @@
         sweptDist = Math.hypot(p.x - cx, p.y - cy);
       }
       const ddist = Math.min(curDist, sweptDist);
+      // Skip the kicker during their post-kick cooldown window. The swept
+      // line can otherwise catch the kicker's own hitbox on the frame
+      // after a flick — especially if they were moving forward — and
+      // deflect the ball off their own body.
+      if (p === ball._lastKicker && (ball._kickCooldown || 0) > 0) continue;
       if (ddist < p.r + ball.r + 2 && ball.z < 18) {
         if (p.role === 'keeper' && !flickResolved) {
           // Keeper catches — credit the shot as on-target to the shooting team
