@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.7</div>
+  <div id="version-tag">v3.6.7-dbg1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1503,14 +1503,17 @@
           // support the attack during own possession and cover during
           // defense. Same-side player overlaps the wing; opposite-side
           // player makes a dynamic support run off the striker.
+          let _dbgBranch = '';
           const shouldOverlap = ballInOppHalf && mySide === ballSide;
           if (shouldOverlap) {
+            _dbgBranch = 'overlap';
             // Push up the flank — arrive near the ball to offer an outlet
             tx = W/2 + mySide * 170;
             ty = smoothedBall.y + forward * 30;
             // Don't cross the opponent penalty box line
             ty = isHomeTeam ? Math.max(130, ty) : Math.min(H - 130, ty);
           } else if (ballInOppHalf) {
+            _dbgBranch = 'supportRun';
             // OPPOSITE-SIDE SUPPORT RUN in the attacking half — phase-
             // cycled so the run isn't static. Trail the carrier by
             // 20-80px (behind in attack direction) and oscillate between
@@ -1536,6 +1539,7 @@
             ty = isHomeTeam ? Math.max(100, Math.min(H/2 + 40, ty))
                             : Math.min(H - 100, Math.max(H/2 - 40, ty));
           } else {
+            _dbgBranch = 'ownHalfPushup';
             // Ball in OWN HALF — push up to midfield to offer a forward
             // outlet. Depth-scaled: +160px when ball is at own goal line,
             // +100px at midfield. Clamped to 40px past midfield.
@@ -1546,6 +1550,16 @@
             tx = p.homeX * 0.7 + smoothedBall.x * 0.3;
             ty = smoothedBall.y + forward * pushAhead;
             ty = isHomeTeam ? Math.max(H/2 - 40, ty) : Math.min(H/2 + 40, ty);
+          }
+          // DEBUG (v3.6.7-dbg1): once-per-second snapshot of this
+          // defender's computed target so we can pin down the bug 2
+          // freeze. Remove after bug 2 is resolved.
+          if (frameCount % 60 === 0 && !isChaser) {
+            const dDbg = Math.round(Math.hypot(tx - p.x, ty - p.y));
+            const vy10 = Math.round(p.vy * 10);
+            logEvent('aiTarget', p, null,
+              _dbgBranch + '|tx=' + Math.round(tx) + '|ty=' + Math.round(ty)
+              + '|d=' + dDbg + '|vy=' + vy10);
           }
         } else if (p === ball.possessedBy) {
           // I HAVE THE BALL — carry it toward the attacking goal, with
