@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.0</div>
+  <div id="version-tag">v3.6.1</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -450,6 +450,11 @@
   const CHASER_SWAP_MIN_GAP_PX = 28;    // challenger must be at least this many px closer
   const CHASER_SWAP_MIN_GAP_PCT = 0.15; // OR 15% of current chaser's distance
   const CHASER_MIN_HOLD_FRAMES = 18;    // ~0.3s minimum hold before the tag can transfer
+
+  // Formation-shift — non-chasers compress toward their own goal when
+  // defending deep, push up when the ball is in the opposing half.
+  const FORMATION_SHIFT_MAX = 180;      // max px a non-chaser drifts from homeY toward the ball
+  const FORMATION_SHIFT_SMOOTHING = 0.04; // lerp rate (per frame) of each player's _formationShift toward target
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -1197,18 +1202,32 @@
           }
         }
       } else {
-        // NON-CHASER: hold formation with a ball-based lateral shift.
-        // Defenders sit in their lane between ball and own goal;
-        // strikers hold a forward outlet for counter-attacks.
-        if (p.role === 'defender') {
-          tx = p.homeX * 0.65 + smoothedBall.x * 0.35;
-          ty = (smoothedBall.y + ownGoalY) / 2;
-          ty = ty * 0.55 + p.homeY * 0.45;
-        } else {
-          tx = W/2 + laneSide * 110;
-          ty = smoothedBall.y + forward * 130;
-          ty = isHomeTeam ? Math.min(H * 0.45, ty) : Math.max(H * 0.55, ty);
-        }
+        // NON-CHASER: hold formation slot, shifted vertically toward
+        // the ball so the whole defensive block compresses/expands
+        // with play. Smoothed per-player so it doesn't teleport when
+        // the chaser tag flips.
+        //
+        // ballNorm:  -1 = ball at top (away's goal), +1 = at bottom (home's).
+        // shift sign: for BOTH teams, ballNorm > 0 pushes the team toward
+        //   higher y, ballNorm < 0 pushes toward lower y — which means
+        //   each team compresses toward its own goal when defending deep
+        //   and pushes up toward midfield when the ball is in the
+        //   attacking half. (Verified: home's own goal is at y≈H, so
+        //   ballNorm=+1 shift=+MAX moves them DOWN = toward own goal ✓.
+        //   Away's own goal is at y≈0, ballNorm=-1 shift=-MAX moves
+        //   them UP = toward own goal ✓.)
+        const ballNorm = (smoothedBall.y - H/2) / (H/2);
+        const desiredShift = ballNorm * FORMATION_SHIFT_MAX;
+        if (p._formationShift === undefined) p._formationShift = desiredShift;
+        p._formationShift += (desiredShift - p._formationShift) * FORMATION_SHIFT_SMOOTHING;
+
+        tx = p.homeX;
+        let shiftedY = p.homeY + p._formationShift;
+        // Clamp to the player's own half (with a 40px buffer past halfway
+        // line so they can push up TO midfield but not past it).
+        if (isHomeTeam) shiftedY = Math.max(H/2 - 40, shiftedY);
+        else            shiftedY = Math.min(H/2 + 40, shiftedY);
+        ty = shiftedY;
       }
     }
 
