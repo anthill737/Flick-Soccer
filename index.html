@@ -362,7 +362,7 @@
   <button id="lobToggle">LOB</button>
   <button id="tackleBtn">TACKLE</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.5b</div>
+  <div id="version-tag">v3.6.5a</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1671,32 +1671,9 @@
     passProb += holdBoost;
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
-    const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.66) : (p.y < H * 0.33);
+    const carrierInOwnThird = isHomeTeam ? (p.y > H * 0.68) : (p.y < H * 0.32);
 
     if (Math.random() < passProb) {
-      // Dribble-when-space gate (hotfix rule 3): if the carrier has a
-      // clear forward cone, skip passing and keep the ball. Cone is
-      // 150px radius, ±45° of the attacking direction (cos 45 ≈ 0.707).
-      // Open = zero opponents in cone, OR one opponent >80px away.
-      // Keepers are exempt — they always look to distribute.
-      let coneOpen = false;
-      if (p.role !== 'keeper') {
-        const atkY = isHomeTeam ? -1 : 1;
-        let oppInCone = 0, nearestConeDist = Infinity;
-        for (const opp of players) {
-          if (opp.team === p.team) continue;
-          const odx = opp.x - p.x, ody = opp.y - p.y;
-          const od = Math.hypot(odx, ody);
-          if (od < 1 || od > 150) continue;
-          const fwd = (ody / od) * atkY;
-          if (fwd < 0.707) continue;
-          oppInCone++;
-          if (od < nearestConeDist) nearestConeDist = od;
-        }
-        coneOpen = oppInCone === 0 || (oppInCone === 1 && nearestConeDist > 80);
-      }
-      if (coneOpen) return; // open field ahead — dribble, don't pass
-
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team) continue;
@@ -1742,15 +1719,6 @@
         if (mate.isUser && isHomeTeam) {
           const userMoving = Math.hypot(mate.vx, mate.vy) > 0.6;
           if (userMoving) score += 12;
-        }
-
-        // Forward bias (hotfix rule 1): strong multiplicative promotion
-        // of teammates further toward the opponent's goal, strong demotion
-        // of teammates behind the carrier. Keeper distribution already
-        // bakes in a hard forward bias via the -200 backpass penalty.
-        if (p.role !== 'keeper') {
-          const forwardFactor = ahead > 20 ? 2.5 : (ahead < -20 ? 0.3 : 1.0);
-          score = score >= 0 ? score * forwardFactor : score / forwardFactor;
         }
 
         if (score > bestScore) { bestScore = score; bestMate = mate; }
