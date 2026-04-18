@@ -278,7 +278,8 @@
     font-weight: 600;
     letter-spacing: 1px;
     z-index: 2000;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: pointer;
     font-family: monospace;
   }
 
@@ -330,7 +331,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.1a</div>
+  <div id="version-tag">v3.6.1b</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -580,6 +581,21 @@
   }
   lobToggle.addEventListener('click', () => setLobMode(!lobMode));
   lobToggle.addEventListener('touchstart', e => { e.preventDefault(); setLobMode(!lobMode); }, { passive: false });
+
+  // Debug-overlay toggle — tap the version tag in the bottom-right.
+  // Mobile has no keyboard for the `D` shortcut, so this is the
+  // primary toggle for v3.6.1 diagnostics.
+  const versionTagEl = document.getElementById('version-tag');
+  if (versionTagEl) {
+    const toggleDebug = (e) => {
+      if (e) e.preventDefault();
+      debugOverlay = !debugOverlay;
+      versionTagEl.style.background = debugOverlay ? 'rgba(255,216,74,0.85)' : '';
+      versionTagEl.style.color = debugOverlay ? '#0a0a0a' : '';
+    };
+    versionTagEl.addEventListener('click', toggleDebug);
+    versionTagEl.addEventListener('touchstart', toggleDebug, { passive: false });
+  }
 
   // ============================================================
   // INPUT — TOUCH (left joystick, right flick zone)
