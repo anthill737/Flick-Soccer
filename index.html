@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.6</div>
+  <div id="version-tag">v3.6.7</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -618,6 +618,8 @@
   let hitstopFrames = 0; // slow-mo duration after tackles for impact feel
   let hitstopAltFrame = false; // toggles each step during hitstop — skip=50% speed
   let kickoffLock = false; // while true, user's first kick must be lateral or back
+  let kickoffFrame = -9999; // frameCount at last kickoff — used to lock keeper out of AI pass candidates right after
+  let kickoffTeam = null;   // team that just took the kickoff ('home' | 'away')
   let frameCount = 0; // monotonic step counter — used by chaser-hysteresis and other sticky logic
   // Per-team chaser: the ONE defender per side committed to the ball.
   // Rest of the squad holds formation. Swapping requires hysteresis.
@@ -1614,7 +1616,10 @@
         if (p._formationShift === undefined) p._formationShift = desiredShift;
         p._formationShift += (desiredShift - p._formationShift) * FORMATION_SHIFT_SMOOTHING;
 
-        tx = p.homeX;
+        // Lateral shade toward the ball (25% pull) so non-chasers
+        // compress the ball-side lane without chasing the ball itself.
+        // Keeps the formation slot recognizable while creating pressure.
+        tx = p.homeX + (smoothedBall.x - p.homeX) * 0.25;
         let shiftedY = p.homeY + p._formationShift;
         // Clamp to the player's own half (with a 40px buffer past halfway
         // line so they can push up TO midfield but not past it).
@@ -1891,12 +1896,21 @@
       : carrierNearestOpp > 150 ? 1
       : (carrierNearestOpp - 60) / 90;
 
+    // Kickoff backpass lock: for 120 frames after the kicking-off team's
+    // kickoff, their AI must NOT pass to the keeper — a press-high striker
+    // tackles the keeper in their own box and scores a free goal. Once
+    // the 120-frame window ends, the normal keeper-in-own-third rule
+    // takes over.
+    const inKickoffLock = kickoffTeam === p.team && (frameCount - kickoffFrame) < 120;
+
     if (Math.random() < passProb) {
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team) continue;
         // Keeper only becomes a legal outlet when carrier is in own third
         if (mate.role === 'keeper' && !carrierInOwnThird) continue;
+        // Kickoff lock — never backpass to keeper right after kickoff
+        if (mate.role === 'keeper' && inKickoffLock) continue;
 
         const ahead = isHomeTeam ? (p.y - mate.y) : (mate.y - p.y);
         const lateralDist = Math.abs(mate.x - p.x);
@@ -2466,6 +2480,8 @@
     // Possession alternates: team that conceded kicks off. Possession
     // goes to the STRIKER of that team, regardless of whether the user
     // is currently playing that position (user rotates each goal).
+    kickoffFrame = frameCount;
+    kickoffTeam = (lastScorer === 'home') ? 'away' : 'home';
     if (lastScorer === 'home') {
       const awayStriker = players.find(pp => pp.team === 'away' && pp.role === 'striker');
       if (awayStriker) {
