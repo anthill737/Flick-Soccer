@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.7</div>
+  <div id="version-tag">v3.6.7-dbg2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -642,7 +642,9 @@
   // Last kick intent is set by the kick emit sites so the subsequent
   // pickup can tell 'pickup' (loose ball) from 'receive' (intentional pass).
   const TELEMETRY_SNAP_CAP = 300;   // 300 * 6 frames / 60Hz = 30s
-  const TELEMETRY_EVT_CAP = 200;
+  // v3.6.7-dbg2: bumped from 200 to hold ~15s of noisy aiTarget debug
+  // events (~240/sec). Restore to 200 after bug 2 is diagnosed.
+  const TELEMETRY_EVT_CAP = 8000;
   const telemetrySnaps = [];        // pushed to, shift()'d when over cap
   const telemetryEvents = [];
   const slotKey = p => p ? (p.team === 'home' ? 'h_' : 'a_') + p._slot : 'none';
@@ -1626,6 +1628,19 @@
         if (isHomeTeam) shiftedY = Math.max(H/2 - 40, shiftedY);
         else            shiftedY = Math.min(H/2 + 40, shiftedY);
         ty = shiftedY;
+      }
+
+      // DEBUG (v3.6.7-dbg2): unconditional per-frame target log for
+      // every non-keeper defender in all branches. NOISY — expect
+      // ~240 events/sec (4 defenders × 60fps). Buffer cap bumped to
+      // 8000 for this build. Remove after bug 2 is diagnosed.
+      if (p.role === 'defender') {
+        const branch = ourPossession ? 'own' : (isChaser ? 'chaser' : 'formation');
+        const dDbg = Math.round(Math.hypot(tx - p.x, ty - p.y));
+        const vy10 = Math.round(p.vy * 10);
+        logEvent('aiTarget', p, null,
+          branch + '|tx=' + Math.round(tx) + '|ty=' + Math.round(ty)
+          + '|d=' + dDbg + '|vy=' + vy10);
       }
     }
 
