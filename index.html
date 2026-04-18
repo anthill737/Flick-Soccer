@@ -330,7 +330,7 @@
   </div>
   <button id="lobToggle">LOB</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.5.1</div>
+  <div id="version-tag">v3.5.2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1137,10 +1137,18 @@
           ty = ball.y + ball.vy * 4;
         } else {
           // OPPONENT HAS BALL — press goal-side so we cut off their
-          // angle to goal instead of bodying the carrier.
-          const goalSideY = isHomeTeam ? 36 : -36;
-          tx = ball.x + ball.vx * 2;
-          ty = ball.y + ball.vy * 2 + goalSideY;
+          // angle to goal instead of bodying the carrier. BUT if the
+          // carrier is barely moving (static dribble or just standing
+          // still), commit to the ball directly to force a tackle.
+          const carrierSpeed = Math.hypot(ballCarrier.vx, ballCarrier.vy);
+          if (carrierSpeed < 0.6) {
+            tx = ball.x + ball.vx * 2;
+            ty = ball.y + ball.vy * 2;
+          } else {
+            const goalSideY = isHomeTeam ? 36 : -36;
+            tx = ball.x + ball.vx * 2;
+            ty = ball.y + ball.vy * 2 + goalSideY;
+          }
         }
       } else if (ballRank === 1) {
         if (!ballCarrier) {
