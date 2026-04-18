@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.7-dbg1</div>
+  <div id="version-tag">v3.6.7-dbg2</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -642,7 +642,9 @@
   // Last kick intent is set by the kick emit sites so the subsequent
   // pickup can tell 'pickup' (loose ball) from 'receive' (intentional pass).
   const TELEMETRY_SNAP_CAP = 300;   // 300 * 6 frames / 60Hz = 30s
-  const TELEMETRY_EVT_CAP = 200;
+  // v3.6.7-dbg2: bumped from 200 to hold ~15s of noisy aiTarget debug
+  // events (~240/sec). Restore to 200 after bug 2 is diagnosed.
+  const TELEMETRY_EVT_CAP = 8000;
   const telemetrySnaps = [];        // pushed to, shift()'d when over cap
   const telemetryEvents = [];
   const slotKey = p => p ? (p.team === 'home' ? 'h_' : 'a_') + p._slot : 'none';
@@ -1503,17 +1505,14 @@
           // support the attack during own possession and cover during
           // defense. Same-side player overlaps the wing; opposite-side
           // player makes a dynamic support run off the striker.
-          let _dbgBranch = '';
           const shouldOverlap = ballInOppHalf && mySide === ballSide;
           if (shouldOverlap) {
-            _dbgBranch = 'overlap';
             // Push up the flank — arrive near the ball to offer an outlet
             tx = W/2 + mySide * 170;
             ty = smoothedBall.y + forward * 30;
             // Don't cross the opponent penalty box line
             ty = isHomeTeam ? Math.max(130, ty) : Math.min(H - 130, ty);
           } else if (ballInOppHalf) {
-            _dbgBranch = 'supportRun';
             // OPPOSITE-SIDE SUPPORT RUN in the attacking half — phase-
             // cycled so the run isn't static. Trail the carrier by
             // 20-80px (behind in attack direction) and oscillate between
@@ -1539,7 +1538,6 @@
             ty = isHomeTeam ? Math.max(100, Math.min(H/2 + 40, ty))
                             : Math.min(H - 100, Math.max(H/2 - 40, ty));
           } else {
-            _dbgBranch = 'ownHalfPushup';
             // Ball in OWN HALF — push up to midfield to offer a forward
             // outlet. Depth-scaled: +160px when ball is at own goal line,
             // +100px at midfield. Clamped to 40px past midfield.
@@ -1550,16 +1548,6 @@
             tx = p.homeX * 0.7 + smoothedBall.x * 0.3;
             ty = smoothedBall.y + forward * pushAhead;
             ty = isHomeTeam ? Math.max(H/2 - 40, ty) : Math.min(H/2 + 40, ty);
-          }
-          // DEBUG (v3.6.7-dbg1): once-per-second snapshot of this
-          // defender's computed target so we can pin down the bug 2
-          // freeze. Remove after bug 2 is resolved.
-          if (frameCount % 60 === 0 && !isChaser) {
-            const dDbg = Math.round(Math.hypot(tx - p.x, ty - p.y));
-            const vy10 = Math.round(p.vy * 10);
-            logEvent('aiTarget', p, null,
-              _dbgBranch + '|tx=' + Math.round(tx) + '|ty=' + Math.round(ty)
-              + '|d=' + dDbg + '|vy=' + vy10);
           }
         } else if (p === ball.possessedBy) {
           // I HAVE THE BALL — carry it toward the attacking goal, with
@@ -1640,6 +1628,19 @@
         if (isHomeTeam) shiftedY = Math.max(H/2 - 40, shiftedY);
         else            shiftedY = Math.min(H/2 + 40, shiftedY);
         ty = shiftedY;
+      }
+
+      // DEBUG (v3.6.7-dbg2): unconditional per-frame target log for
+      // every non-keeper defender in all branches. NOISY — expect
+      // ~240 events/sec (4 defenders × 60fps). Buffer cap bumped to
+      // 8000 for this build. Remove after bug 2 is diagnosed.
+      if (p.role === 'defender') {
+        const branch = ourPossession ? 'own' : (isChaser ? 'chaser' : 'formation');
+        const dDbg = Math.round(Math.hypot(tx - p.x, ty - p.y));
+        const vy10 = Math.round(p.vy * 10);
+        logEvent('aiTarget', p, null,
+          branch + '|tx=' + Math.round(tx) + '|ty=' + Math.round(ty)
+          + '|d=' + dDbg + '|vy=' + vy10);
       }
     }
 
