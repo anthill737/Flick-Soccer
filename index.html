@@ -121,6 +121,31 @@
     color: #fff;
     box-shadow: 0 0 18px rgba(255,107,74,0.8);
   }
+  #logBtn {
+    position: fixed;
+    right: 4px;
+    bottom: calc(22% + 128px);  /* stacked 10px above #tackleBtn */
+    width: 54px;
+    height: 54px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(40,40,48,0.55);
+    color: #aaa;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border: 2px solid rgba(255,255,255,0.18);
+    pointer-events: auto;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #logBtn::before {
+    content: '';
+    position: absolute;
+    inset: -22px;
+  }
   /* Countdown overlay */
   #countdown {
     position: fixed;
@@ -361,8 +386,9 @@
   </div>
   <button id="lobToggle">LOB</button>
   <button id="tackleBtn">TACKLE</button>
+  <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.5e</div>
+  <div id="version-tag">v3.6.6</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -546,7 +572,8 @@
     players = [];
     // HOME (red, attacks up) — tag outfielders with _slot so the user
     // can rotate through them each kickoff.
-    players.push(createPlayer('home', 'keeper', W/2, H - 40));
+    const hGk = createPlayer('home', 'keeper', W/2, H - 40); hGk._slot = 'gk';
+    players.push(hGk);
     const ldef = createPlayer('home', 'defender', W/2 - 110, H * 0.72); ldef._slot = 'ldef';
     const rdef = createPlayer('home', 'defender', W/2 + 110, H * 0.72); rdef._slot = 'rdef';
     const user = createPlayer('home', 'striker', W/2, H * 0.58);
@@ -557,11 +584,15 @@
     players.push(user);
     userPlayer = user;
 
-    // AWAY (blue, attacks down)
-    players.push(createPlayer('away', 'keeper', W/2, 40));
-    players.push(createPlayer('away', 'defender', W/2 - 110, H * 0.28));
-    players.push(createPlayer('away', 'defender', W/2 + 110, H * 0.28));
-    players.push(createPlayer('away', 'striker', W/2, H * 0.42));
+    // AWAY (blue, attacks down) — slot-tagged for telemetry
+    const aGk = createPlayer('away', 'keeper', W/2, 40); aGk._slot = 'gk';
+    const aLdef = createPlayer('away', 'defender', W/2 - 110, H * 0.28); aLdef._slot = 'ldef';
+    const aRdef = createPlayer('away', 'defender', W/2 + 110, H * 0.28); aRdef._slot = 'rdef';
+    const aStr = createPlayer('away', 'striker', W/2, H * 0.42); aStr._slot = 'striker';
+    players.push(aGk);
+    players.push(aLdef);
+    players.push(aRdef);
+    players.push(aStr);
   }
 
   const ball = {
@@ -600,6 +631,113 @@
     return { passes: 0, tackles: 0, shots: 0, shotsOnGoal: 0, goals: 0, possessionFrames: 0 };
   }
   let stats = { home: emptyTeamStats(), away: emptyTeamStats() };
+
+  // ============================================================
+  // TELEMETRY — rolling 30s log of snapshots + events for debug export
+  // ============================================================
+  // Snapshots every 6 frames (10Hz). Events logged as they happen.
+  // Circular buffers use a write-index; oldest entries get overwritten.
+  // Last kick intent is set by the kick emit sites so the subsequent
+  // pickup can tell 'pickup' (loose ball) from 'receive' (intentional pass).
+  const TELEMETRY_SNAP_CAP = 300;   // 300 * 6 frames / 60Hz = 30s
+  const TELEMETRY_EVT_CAP = 200;
+  const telemetrySnaps = [];        // pushed to, shift()'d when over cap
+  const telemetryEvents = [];
+  const slotKey = p => p ? (p.team === 'home' ? 'h_' : 'a_') + p._slot : 'none';
+  function logEvent(type, actor, target, note) {
+    telemetryEvents.push({
+      frame: frameCount,
+      type,
+      actor: slotKey(actor),
+      target: target ? slotKey(target) : '',
+      note: note || '',
+    });
+    if (telemetryEvents.length > TELEMETRY_EVT_CAP) telemetryEvents.shift();
+  }
+  function recordTelemetrySnapshot() {
+    const r = Math.round;
+    const possessor = slotKey(ball.possessedBy);
+    const row = [
+      frameCount,
+      gameState,
+      r(ball.x), r(ball.y), r(ball.z), r(ball.vx), r(ball.vy),
+      possessor,
+    ];
+    // Fixed player order: home gk, ldef, rdef, striker, then away same
+    const order = [
+      ['home', 'gk'], ['home', 'ldef'], ['home', 'rdef'], ['home', 'striker'],
+      ['away', 'gk'], ['away', 'ldef'], ['away', 'rdef'], ['away', 'striker'],
+    ];
+    for (const [team, slot] of order) {
+      const p = players.find(pp => pp.team === team && pp._slot === slot);
+      if (p) row.push(r(p.x), r(p.y), r(p.vx), r(p.vy));
+      else row.push(0, 0, 0, 0);
+    }
+    telemetrySnaps.push(row);
+    if (telemetrySnaps.length > TELEMETRY_SNAP_CAP) telemetrySnaps.shift();
+  }
+  function serializeTelemetry() {
+    const lines = [
+      '# flick-soccer telemetry v1',
+      '# fields: S=snapshot E=event frame=frameCount',
+      '# snapshot: frame,state,bx,by,bz,bvx,bvy,possessor,p0x,p0y,p0vx,p0vy,...',
+      '# players in order: h_gk,h_ldef,h_rdef,h_striker,a_gk,a_ldef,a_rdef,a_striker',
+      '# event: frame,type,actor,target,note',
+    ];
+    // Interleave snapshots and events by frame (stable order: snap then evt at same frame)
+    let si = 0, ei = 0;
+    while (si < telemetrySnaps.length || ei < telemetryEvents.length) {
+      const s = telemetrySnaps[si];
+      const e = telemetryEvents[ei];
+      if (s && (!e || s[0] <= e.frame)) {
+        lines.push('S,' + s.join(','));
+        si++;
+      } else {
+        lines.push('E,' + e.frame + ',' + e.type + ',' + e.actor + ',' + e.target + ',' + e.note);
+        ei++;
+      }
+    }
+    return lines.join('\n');
+  }
+  function exportTelemetry() {
+    const text = serializeTelemetry();
+    const rowCount = telemetrySnaps.length + telemetryEvents.length;
+    const seconds = telemetrySnaps.length > 0
+      ? ((telemetrySnaps[telemetrySnaps.length - 1][0] - telemetrySnaps[0][0]) / 60).toFixed(1)
+      : '0';
+    // navigator.clipboard.writeText MUST be called synchronously in the
+    // user-gesture handler on mobile Safari — don't await anything first.
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch (e) { ok = false; }
+    if (ok) {
+      flashText('copied ' + rowCount + ' rows, ' + seconds + 's', '#6ad77a');
+    } else {
+      showTelemetryFallback(text);
+    }
+  }
+  function showTelemetryFallback(text) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:3000;display:flex;flex-direction:column;padding:20px;box-sizing:border-box;';
+    const hint = document.createElement('div');
+    hint.textContent = 'Long-press the text to select, then copy. Tap outside to close.';
+    hint.style.cssText = 'color:#e5e5e5;font-size:13px;margin-bottom:10px;font-family:-apple-system,sans-serif;';
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.readOnly = true;
+    ta.style.cssText = 'flex:1;width:100%;background:#111;color:#ddd;border:1px solid #444;font-family:monospace;font-size:10px;padding:8px;box-sizing:border-box;';
+    overlay.appendChild(hint);
+    overlay.appendChild(ta);
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) overlay.remove();
+    });
+    document.body.appendChild(overlay);
+    ta.focus(); ta.select();
+  }
 
   // Match history — last 10 games, persisted in localStorage
   const MATCH_HISTORY_KEY = 'flickSoccerHistory_v1';
@@ -661,6 +799,14 @@
   if (tackleBtn) {
     tackleBtn.addEventListener('click', attemptSlideTackle);
     tackleBtn.addEventListener('touchstart', e => { e.preventDefault(); attemptSlideTackle(); }, { passive: false });
+  }
+
+  const logBtn = document.getElementById('logBtn');
+  if (logBtn) {
+    // Mobile Safari requires clipboard.writeText to fire inside the touch
+    // handler synchronously — route through exportTelemetry which does so.
+    logBtn.addEventListener('click', exportTelemetry);
+    logBtn.addEventListener('touchstart', e => { e.preventDefault(); exportTelemetry(); }, { passive: false });
   }
 
   // ============================================================
@@ -770,6 +916,7 @@
     if (e.key === 'Shift') input.keys['shift'] = true;
     if (e.key === ' ') { e.preventDefault(); setLobMode(!lobMode); }
     if (e.key.toLowerCase() === 'f') { e.preventDefault(); attemptSlideTackle(); }
+    if (e.key.toLowerCase() === 'l') { e.preventDefault(); exportTelemetry(); }
     if (['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault();
   });
   window.addEventListener('keyup', e => {
@@ -895,6 +1042,7 @@
     ball._isShot = false;
     ball._shotDead = false;
     stats.home.passes++;
+    logEvent('kick', userPlayer, null, 'pass');
     kickoffLock = false; // user has played the ball — lock clears
     if (gameState === 'kickoff') gameState = 'playing';
     userPlayer.kickAnimT = 0;
@@ -1008,6 +1156,7 @@
     ball._isShot = true; // user kicks count as shots
     ball._shotDead = false;
     stats.home.shots++;
+    logEvent('kick', userPlayer, null, lobMode ? 'lob' : 'shot');
     kickoffLock = false; // clear once the user has actually played the ball
     if (gameState === 'kickoff') gameState = 'playing';
     userPlayer.kickAnimT = 0;
@@ -1068,6 +1217,7 @@
             opp.vx = nx * 3.6; opp.vy = ny * 3.6;
             userPlayer._tackleImmune = 45;
             stats.home.tackles++;
+            logEvent('slide', userPlayer, opp, 'hit');
             flashText('SLIDE STEAL', '#ff9f40');
             // End slide early on successful steal — user exits into
             // normal possession control next frame
@@ -1092,6 +1242,7 @@
           userPlayer._tackleCooldown = SLIDE_MISS_COOLDOWN;
           userPlayer._sluggish = SLIDE_MISS_SLUGGISH;
           flashText('MISS', '#888');
+          logEvent('slide', userPlayer, null, 'miss');
         }
       }
       return; // skip joystick/accel/facing this frame
@@ -1221,8 +1372,10 @@
         currentDist * CHASER_SWAP_MIN_GAP_PCT
       );
       if (gap >= gapThreshold) {
+        const prev = state.playerRef;
         state.playerRef = bestP;
         state.lockedAt = frameCount;
+        logEvent('chaser_swap', bestP, prev, team);
       }
     }
   }
@@ -1614,6 +1767,7 @@
         ball._isShot = false;
         ball._shotDead = false;
         stats[p.team].passes++;
+        logEvent('kick', p, best, 'clearance');
         flickResolved = false;
         p.kickAnimT = 0; p.kickAnimDur = 14;
         p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -1650,6 +1804,7 @@
         ball._isShot = false;
         ball._shotDead = false;
         stats[p.team].passes++;
+        logEvent('kick', p, best, 'clearance');
         flickResolved = false;
         p.kickAnimT = 0; p.kickAnimDur = 14;
         p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -1685,6 +1840,7 @@
       ball._isShot = true;
       ball._shotDead = false;
       stats[p.team].shots++;
+      logEvent('kick', p, null, 'shot');
       flickResolved = false;
       p.kickAnimT = 0; p.kickAnimDur = 14;
       p.kickAnimDir = { x: dx/d, y: dy/d };
@@ -1864,6 +2020,7 @@
           ball._isShot = false;
           ball._shotDead = false;
           stats[p.team].passes++;
+          logEvent('kick', p, bestMate, 'pass');
           flickResolved = false;
           p.kickAnimT = 0; p.kickAnimDur = 12;
           p.kickAnimDir = { x: ldx/ld, y: ldy/ld };
@@ -1929,6 +2086,7 @@
             if (p.isUser || carrier.isUser) {
               flashText(p.isUser ? 'MISSED!' : 'DODGED', '#aaa');
             }
+            logEvent('tackle_miss', p, carrier, '');
             break; // only one interaction per tackle pass
           }
         }
@@ -1982,6 +2140,7 @@
         p._recentlyGained = 90;
 
         stats[p.team].tackles++;
+        logEvent('tackle_hit', p, carrier, fumble ? 'fumble' : 'clean');
         hitstopFrames = 10; // shorter slow-mo — visual shockwave carries the impact
         hitstopAltFrame = false;
 
@@ -2135,6 +2294,7 @@
           scoreHomeEl.textContent = scoreHome;
           flickResolved = true;
           flashText('GOAL!', '#ffd84a');
+          logEvent('goal', ball._lastKicker, null, 'home');
           spawnConfetti(ball.x, ball.y);
           startGoalPause();
           ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.vz = 0; ball.z = 0;
@@ -2154,6 +2314,7 @@
           scoreAwayEl.textContent = scoreAway;
           flickResolved = true;
           flashText('CONCEDED', '#ff6b6b');
+          logEvent('goal', ball._lastKicker, null, 'away');
           startGoalPause();
           ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.vz = 0; ball.z = 0;
           return;
@@ -2214,6 +2375,7 @@
           ball.spin *= 0.2;
           flickResolved = true;
           flashText(p.team === 'home' ? 'KEEPER SAVE' : 'SAVED!', '#ffffff');
+          logEvent('save', p, null, '');
           continue;
         }
         // Pickup / deflect logic:
@@ -2228,6 +2390,10 @@
         // handles fast balls), but they can't gain possession.
         const hasTackleCooldown = (p._tackleCooldown || 0) > 0;
         if (ballSpeed < 5.5 && !isShooterCooldown && !hasTackleCooldown) {
+          // Note for telemetry: 'receive' if the prior kicker was a teammate
+          // (pass reception), otherwise 'pickup' (loose ball).
+          const pickupNote = (ball._lastKicker && ball._lastKicker.team === p.team && ball._lastKicker !== p)
+            ? 'receive' : 'pickup';
           ball.possessedBy = p;
           ball.vx = 0; ball.vy = 0; ball.spin = 0;
           // Settle window so the receiver isn't tackled the instant
@@ -2235,6 +2401,7 @@
           // react and flick) than for AI.
           p._tackleImmune = p.isUser ? 45 : 20;
           flickResolved = true;
+          logEvent('possess', p, null, pickupNote);
           break;
         } else if (!flickResolved) {
           // If this was a shot heading toward the shooter's goal and a
@@ -3018,6 +3185,10 @@
 
     // Track possession (one frame of credit to whichever team holds the ball)
     if (ball.possessedBy) stats[ball.possessedBy.team].possessionFrames++;
+
+    // Telemetry snapshot every 6 frames (10Hz). Placed at end of step so
+    // the recorded state reflects all this frame's updates.
+    if (frameCount % 6 === 0) recordTelemetrySnapshot();
   }
 
   // Kickoff — real soccer rule: the first kick can't go forward (toward
@@ -3067,6 +3238,7 @@
     ball._kickCooldown = 30;
     ball._isShot = false;
     stats[taker.team].passes++;
+    logEvent('kick', taker, target, 'pass');
     taker.kickAnimT = 0;
     taker.kickAnimDur = 10;
     taker.kickAnimDir = { x: dx/d, y: dy/d };
