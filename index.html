@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.10</div>
+  <div id="version-tag">v3.6.11</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1444,29 +1444,35 @@
     const attackGoalY = isHomeTeam ? 6 : H - 6;
 
     if (p.role === 'keeper') {
-      // Keeper leash: stay in a rectangular goal-box unless the ball
-      // is inside the box OR within KEEPER_RELEASE of its boundary.
-      // When inside/near, commit to the ball. Otherwise, slide laterally
-      // along the goal line to mirror ball.x clamped to the box width.
+      // Keeper: defaults to the top of the 6-yard area (anchorY ~90px
+      // off the goal line), sliding laterally to mirror ball.x within
+      // the box width. Commits forward (leaves the leash) only when:
+      //   (a) the ball is a shot — fast + moving toward our goal, OR
+      //   (b) an opposing carrier is within 200px of the goal line
+      //       (genuine pressure, not a harmless midfield dribble).
       const boxXMin = W/2 - KEEPER_BOX_WIDTH/2;
       const boxXMax = W/2 + KEEPER_BOX_WIDTH/2;
-      const anchorY = isHomeTeam ? H - 30 : 30;              // where keeper stands when leashed
-      const goalLineY = isHomeTeam ? H - 40 : 40;            // goal-line center
-      const boxNearY = isHomeTeam ? goalLineY - KEEPER_BOX_DEPTH : goalLineY + KEEPER_BOX_DEPTH;
-      const boxYMin = Math.min(goalLineY, boxNearY);
-      const boxYMax = Math.max(goalLineY, boxNearY);
+      const goalLineY = isHomeTeam ? H - 40 : 40;
+      const anchorY = isHomeTeam ? goalLineY - 90 : goalLineY + 90;
 
-      const ballInRelease =
-        ball.x >= boxXMin - KEEPER_RELEASE && ball.x <= boxXMax + KEEPER_RELEASE &&
-        ball.y >= boxYMin - KEEPER_RELEASE && ball.y <= boxYMax + KEEPER_RELEASE;
+      const ballSpeed = Math.hypot(ball.vx, ball.vy);
+      const ballMovingTowardOurGoal = isHomeTeam ? ball.vy > 0 : ball.vy < 0;
+      const isShotThreat = ballSpeed > 3 && ballMovingTowardOurGoal;
 
-      if (ballInRelease) {
-        // Commit to the ball — this is the only situation that lets
-        // the keeper leave the box
+      let carrierThreat = false;
+      if (ball.possessedBy && ball.possessedBy.team !== p.team) {
+        const carrierDistToGoal = isHomeTeam
+          ? (H - ball.possessedBy.y)
+          : ball.possessedBy.y;
+        carrierThreat = carrierDistToGoal < 200;
+      }
+
+      if (isShotThreat || carrierThreat) {
+        // Commit to the ball — leave the leash to block
         tx = ball.x;
         ty = ball.y + (isHomeTeam ? -15 : 15);
       } else {
-        // Leashed: mirror ball.x laterally, clamped to box; stay at anchor y
+        // Leashed at top of box: mirror ball.x laterally, clamped to box
         tx = Math.max(boxXMin, Math.min(boxXMax, ball.x));
         ty = anchorY;
       }
@@ -1811,10 +1817,11 @@
     const goalY = isHomeTeam ? goalTopY : goalBotY + GOAL_DEPTH;
     const distToGoal = Math.hypot(goalX - p.x, goalY - p.y);
 
-    // KEEPER EMERGENCY PUNT: if the keeper has held the ball for ~0.7s
-    // without a clean pass opportunity, hoof it upfield (airborne) to
-    // the most-forward teammate. Prevents the keeper-stuck glitch.
-    if (p.role === 'keeper' && p._possessionTime > 42) {
+    // KEEPER EMERGENCY PUNT: if the keeper has held the ball for ~5s
+    // without finding an open teammate, hoof it upfield (airborne) to
+    // the most-forward teammate. Lets the keeper hold the ball first
+    // while the team runs upfield to get open (see pass gating below).
+    if (p.role === 'keeper' && p._possessionTime > 300) {
       let best = null, bestFwd = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team || mate.role === 'keeper') continue;
@@ -1928,11 +1935,17 @@
     // Pass frequency — keepers distribute quickly so the team doesn't
     // get pinned deep in their own box.
     let passProb = (p._recentlyGained && p._recentlyGained > 0) ? 0.14 : 0.028;
-    if (p.role === 'keeper') passProb = 0.35;
     // Scale pass probability with how long we've held the ball —
     // modest boost so AI isn't hot-potato-ing the ball frantically
     const holdBoost = Math.min(0.08, p._possessionTime * 0.0008);
     passProb += holdBoost;
+    // Keeper override (applies AFTER holdBoost so hold is a hard hold):
+    // refuses to pass for the first 2.5s while teammates run upfield to
+    // get open. After the hold window, distribute at the keeper rate.
+    // Emergency punt at 5s (above) is the last-resort exit if no one opens.
+    if (p.role === 'keeper') {
+      passProb = p._possessionTime > 150 ? 0.35 : 0;
+    }
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
     // Thresholds per spec: home y > H*0.66, away y < H*0.33. Outside
