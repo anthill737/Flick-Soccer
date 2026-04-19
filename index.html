@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.8</div>
+  <div id="version-tag">v3.6.9</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1513,30 +1513,14 @@
             // Don't cross the opponent penalty box line
             ty = isHomeTeam ? Math.max(130, ty) : Math.min(H - 130, ty);
           } else if (ballInOppHalf) {
-            // OPPOSITE-SIDE SUPPORT RUN in the attacking half — phase-
-            // cycled so the run isn't static. Trail the carrier by
-            // 20-80px (behind in attack direction) and oscillate between
-            // central and wide lanes on the opposite wing, offering a
-            // short outlet so the striker isn't left alone. Cycle ~6s,
-            // per-player phase so the two teams desynchronize.
-            const phase = (performance.now() / 1000 + p.homeX * 0.003) % 6;
-            let trail, lateral;
-            if (phase < 2) {
-              // HOLD wide — trailing, ready for a switch-of-play pass
-              trail = 80; lateral = 150;
-            } else if (phase < 4) {
-              // UNDERLAP — drive into the central channel, closer to ball
-              trail = 20; lateral = 50;
-            } else {
-              // DRIFT wide — stretch the defense, trailing mid-depth
-              trail = 50; lateral = 180;
-            }
-            tx = W/2 + mySide * lateral;
-            ty = smoothedBall.y - forward * trail;
-            // Don't overrun the penalty area, and don't drop past midfield
-            // by more than 40px (existing formation buffer).
-            ty = isHomeTeam ? Math.max(100, Math.min(H/2 + 40, ty))
-                            : Math.min(H - 100, Math.max(H/2 - 40, ty));
+            // HANG-BACK OUTLET in the attacking half — stay at midfield
+            // on the opposite flank, ready to recycle possession if the
+            // attack breaks down. The same-side overlap defender is the
+            // penetrating runner; this player is the safety. Sits ~60px
+            // into own half so they're available for a safe backpass
+            // but not pinned to the own goal.
+            tx = W/2 + mySide * 140;
+            ty = H/2 - forward * 60;
           } else {
             // Ball in OWN HALF — push up to midfield to offer a forward
             // outlet. Depth-scaled: +160px when ball is at own goal line,
@@ -1599,35 +1583,63 @@
           }
         }
       } else {
-        // NON-CHASER: hold formation slot, shifted vertically toward
-        // the ball so the whole defensive block compresses/expands
-        // with play. Smoothed per-player so it doesn't teleport when
-        // the chaser tag flips.
-        //
-        // ballNorm:  -1 = ball at top (away's goal), +1 = at bottom (home's).
-        // shift sign: for BOTH teams, ballNorm > 0 pushes the team toward
-        //   higher y, ballNorm < 0 pushes toward lower y — which means
-        //   each team compresses toward its own goal when defending deep
-        //   and pushes up toward midfield when the ball is in the
-        //   attacking half. (Verified: home's own goal is at y≈H, so
-        //   ballNorm=+1 shift=+MAX moves them DOWN = toward own goal ✓.
-        //   Away's own goal is at y≈0, ballNorm=-1 shift=-MAX moves
-        //   them UP = toward own goal ✓.)
-        const ballNorm = (smoothedBall.y - H/2) / (H/2);
-        const desiredShift = ballNorm * FORMATION_SHIFT_MAX;
-        if (p._formationShift === undefined) p._formationShift = desiredShift;
-        p._formationShift += (desiredShift - p._formationShift) * FORMATION_SHIFT_SMOOTHING;
+        // NON-CHASER during opponent possession. One of the two non-
+        // keeper non-chaser teammates becomes the HALF CHASER —
+        // shadows the opposing striker goal-side, cutting the through-
+        // ball lane and positioning as an outlet if the main chaser
+        // wins the ball. The other teammate holds formation-shade
+        // (existing logic).
+        let isHalfChaser = false;
+        const oppStriker = players.find(pp =>
+          pp.team !== p.team && pp.role === 'striker'
+        );
+        if (oppStriker) {
+          let nearest = null, nearestD = Infinity;
+          for (const mate of players) {
+            if (mate.team !== p.team) continue;
+            if (mate.role === 'keeper') continue;
+            if (chaserState[p.team].playerRef === mate) continue; // skip main chaser
+            const d = Math.hypot(mate.x - oppStriker.x, mate.y - oppStriker.y);
+            if (d < nearestD) { nearestD = d; nearest = mate; }
+          }
+          isHalfChaser = nearest === p;
 
-        // Lateral shade toward the ball (25% pull) so non-chasers
-        // compress the ball-side lane without chasing the ball itself.
-        // Keeps the formation slot recognizable while creating pressure.
-        tx = p.homeX + (smoothedBall.x - p.homeX) * 0.25;
-        let shiftedY = p.homeY + p._formationShift;
-        // Clamp to the player's own half (with a 40px buffer past halfway
-        // line so they can push up TO midfield but not past it).
-        if (isHomeTeam) shiftedY = Math.max(H/2 - 40, shiftedY);
-        else            shiftedY = Math.min(H/2 + 40, shiftedY);
-        ty = shiftedY;
+          // Mitigation: if the opposing striker is too close to the
+          // ball carrier, doubling up feels like ganging up — fall
+          // back to formation-shade instead.
+          const oppCarrier = ball.possessedBy;
+          if (isHalfChaser && oppCarrier && oppCarrier !== oppStriker &&
+              oppCarrier.team !== p.team) {
+            const carrierToStrikerD = Math.hypot(
+              oppCarrier.x - oppStriker.x,
+              oppCarrier.y - oppStriker.y
+            );
+            if (carrierToStrikerD < 120) isHalfChaser = false;
+          }
+        }
+
+        if (isHalfChaser && oppStriker) {
+          // Shadow the striker ~80px goal-side (toward our own goal).
+          tx = oppStriker.x;
+          ty = oppStriker.y - forward * 80;
+        } else {
+          // Formation-shade: hold slot with ball-side lateral pull.
+          //
+          // ballNorm:  -1 = ball at top (away's goal), +1 = at bottom (home's).
+          // shift sign: for BOTH teams, ballNorm > 0 pushes the team toward
+          //   higher y, ballNorm < 0 pushes toward lower y — each team
+          //   compresses toward its own goal when defending deep.
+          const ballNorm = (smoothedBall.y - H/2) / (H/2);
+          const desiredShift = ballNorm * FORMATION_SHIFT_MAX;
+          if (p._formationShift === undefined) p._formationShift = desiredShift;
+          p._formationShift += (desiredShift - p._formationShift) * FORMATION_SHIFT_SMOOTHING;
+
+          tx = p.homeX + (smoothedBall.x - p.homeX) * 0.25;
+          let shiftedY = p.homeY + p._formationShift;
+          if (isHomeTeam) shiftedY = Math.max(H/2 - 40, shiftedY);
+          else            shiftedY = Math.min(H/2 + 40, shiftedY);
+          ty = shiftedY;
+        }
       }
 
       // DEBUG (v3.6.7-dbg2): unconditional per-frame target log for
