@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.13</div>
+  <div id="version-tag">v3.6.14</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1515,7 +1515,26 @@
         const ballSide = smoothedBall.x < W/2 ? -1 : 1;
         const mySide = p.homeX < W/2 ? -1 : 1;
 
-        if (p.role === 'defender') {
+        // KEEPER DISTRIBUTION MODE — while our keeper holds the ball,
+        // the whole team breaks downfield toward the opponent's goal
+        // so the keeper has real passing targets, not backpass outlets.
+        // Overrides the per-role branches below.
+        const keeperHasBall = ballCarrier && ballCarrier.role === 'keeper';
+        if (keeperHasBall && p !== ballCarrier) {
+          if (p.role === 'defender') {
+            // Spread to the midfield line on each flank.
+            tx = W/2 + mySide * 130;
+            ty = H/2 + forward * -20; // ~20px into own half
+          } else if (p.role === 'mid') {
+            // Midfielder pushes just past midfield into opp half.
+            tx = W/2 + mySide * 60;
+            ty = isHomeTeam ? H * 0.42 : H * 0.58;
+          } else {
+            // Striker breaks deep — top of opp box.
+            tx = W/2 + Math.sin(performance.now() / 700 + p.homeX) * 110;
+            ty = isHomeTeam ? H * 0.25 : H * 0.75;
+          }
+        } else if (p.role === 'defender') {
           // The two "defenders" are really positional midfielders — they
           // support the attack during own possession and cover during
           // defense. Same-side player overlaps the wing; opposite-side
@@ -1638,7 +1657,8 @@
         let isScrambler = false;
         if (!ball.possessedBy) {
           const myDistToBall = Math.hypot(p.x - ball.x, p.y - ball.y);
-          if (myDistToBall < 150) {
+          // Tightened from 150 → 135 (v3.6.14) to reduce gang-up feel.
+          if (myDistToBall < 135) {
             let nearestMate = null, nearestD = Infinity;
             for (const mate of players) {
               if (mate.team !== p.team) continue;
@@ -1676,7 +1696,8 @@
               oppCarrier.x - oppStriker.x,
               oppCarrier.y - oppStriker.y
             );
-            if (carrierToStrikerD < 120) isHalfChaser = false;
+            // Tightened from 120 → 135 (v3.6.14) to reduce gang-up feel.
+            if (carrierToStrikerD < 135) isHalfChaser = false;
           }
         }
 
