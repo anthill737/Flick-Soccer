@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.9</div>
+  <div id="version-tag">v3.6.10</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1517,10 +1517,15 @@
             // on the opposite flank, ready to recycle possession if the
             // attack breaks down. The same-side overlap defender is the
             // penetrating runner; this player is the safety. Sits ~60px
-            // into own half so they're available for a safe backpass
-            // but not pinned to the own goal.
+            // into own half normally, but drifts 40px forward when the
+            // carrier is deep in the attacking third ("forward hunger"
+            // — everyone wants to help when a shot is possible).
             tx = W/2 + mySide * 140;
-            ty = H/2 - forward * 60;
+            const carrierDeep = isHomeTeam
+              ? smoothedBall.y < H * 0.33
+              : smoothedBall.y > H * 0.67;
+            const offsetIntoOwnHalf = carrierDeep ? 20 : 60;
+            ty = H/2 - forward * offsetIntoOwnHalf;
           } else {
             // Ball in OWN HALF — push up to midfield to offer a forward
             // outlet. Depth-scaled: +160px when ball is at own goal line,
@@ -1583,17 +1588,36 @@
           }
         }
       } else {
-        // NON-CHASER during opponent possession. One of the two non-
-        // keeper non-chaser teammates becomes the HALF CHASER —
-        // shadows the opposing striker goal-side, cutting the through-
-        // ball lane and positioning as an outlet if the main chaser
-        // wins the ball. The other teammate holds formation-shade
-        // (existing logic).
+        // NON-CHASER during opponent possession. Three possible roles:
+        // SCRAMBLE (loose ball within 150px + closest non-chaser),
+        // HALF CHASER (shadow opposing striker), or FORMATION-SHADE.
+        //
+        // SCRAMBLE: when the ball is loose AND within 150px of this
+        // player AND they are the closest non-keeper non-chaser
+        // teammate to the loose ball, they also commit to the ball
+        // (like the main chaser). One extra player joining a 50/50
+        // feels alive; more than one re-breaks the anti-gang rule.
+        let isScrambler = false;
+        if (!ball.possessedBy) {
+          const myDistToBall = Math.hypot(p.x - ball.x, p.y - ball.y);
+          if (myDistToBall < 150) {
+            let nearestMate = null, nearestD = Infinity;
+            for (const mate of players) {
+              if (mate.team !== p.team) continue;
+              if (mate.role === 'keeper') continue;
+              if (chaserState[p.team].playerRef === mate) continue; // skip main chaser
+              const d = Math.hypot(mate.x - ball.x, mate.y - ball.y);
+              if (d < nearestD) { nearestD = d; nearestMate = mate; }
+            }
+            isScrambler = nearestMate === p;
+          }
+        }
+
         let isHalfChaser = false;
         const oppStriker = players.find(pp =>
           pp.team !== p.team && pp.role === 'striker'
         );
-        if (oppStriker) {
+        if (!isScrambler && oppStriker) {
           let nearest = null, nearestD = Infinity;
           for (const mate of players) {
             if (mate.team !== p.team) continue;
@@ -1618,7 +1642,11 @@
           }
         }
 
-        if (isHalfChaser && oppStriker) {
+        if (isScrambler) {
+          // Commit to the loose ball — lead by velocity like the chaser
+          tx = ball.x + ball.vx * 4;
+          ty = ball.y + ball.vy * 4;
+        } else if (isHalfChaser && oppStriker) {
           // Shadow the striker ~80px goal-side (toward our own goal).
           tx = oppStriker.x;
           ty = oppStriker.y - forward * 80;
