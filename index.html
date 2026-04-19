@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.11</div>
+  <div id="version-tag">v3.6.12</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -570,28 +570,36 @@
 
   function setupPlayers() {
     players = [];
-    // HOME (red, attacks up) — tag outfielders with _slot so the user
-    // can rotate through them each kickoff.
+    // HOME (red, attacks up) — 2-2-1 formation:
+    //   keeper, 2 defenders (deep), 2 mids (middle band), 1 striker.
     const hGk = createPlayer('home', 'keeper', W/2, H - 40); hGk._slot = 'gk';
     players.push(hGk);
-    const ldef = createPlayer('home', 'defender', W/2 - 110, H * 0.72); ldef._slot = 'ldef';
-    const rdef = createPlayer('home', 'defender', W/2 + 110, H * 0.72); rdef._slot = 'rdef';
-    const user = createPlayer('home', 'striker', W/2, H * 0.58);
+    const ldef = createPlayer('home', 'defender', W/2 - 110, H * 0.78); ldef._slot = 'ldef';
+    const rdef = createPlayer('home', 'defender', W/2 + 110, H * 0.78); rdef._slot = 'rdef';
+    const lmid = createPlayer('home', 'mid', W/2 - 90, H * 0.62); lmid._slot = 'lmid';
+    const rmid = createPlayer('home', 'mid', W/2 + 90, H * 0.62); rmid._slot = 'rmid';
+    const user = createPlayer('home', 'striker', W/2, H * 0.48);
     user.isUser = true;
     user._slot = 'striker';
     players.push(ldef);
     players.push(rdef);
+    players.push(lmid);
+    players.push(rmid);
     players.push(user);
     userPlayer = user;
 
-    // AWAY (blue, attacks down) — slot-tagged for telemetry
+    // AWAY (blue, attacks down) — mirrored 2-2-1
     const aGk = createPlayer('away', 'keeper', W/2, 40); aGk._slot = 'gk';
-    const aLdef = createPlayer('away', 'defender', W/2 - 110, H * 0.28); aLdef._slot = 'ldef';
-    const aRdef = createPlayer('away', 'defender', W/2 + 110, H * 0.28); aRdef._slot = 'rdef';
-    const aStr = createPlayer('away', 'striker', W/2, H * 0.42); aStr._slot = 'striker';
+    const aLdef = createPlayer('away', 'defender', W/2 - 110, H * 0.22); aLdef._slot = 'ldef';
+    const aRdef = createPlayer('away', 'defender', W/2 + 110, H * 0.22); aRdef._slot = 'rdef';
+    const aLmid = createPlayer('away', 'mid', W/2 - 90, H * 0.38); aLmid._slot = 'lmid';
+    const aRmid = createPlayer('away', 'mid', W/2 + 90, H * 0.38); aRmid._slot = 'rmid';
+    const aStr = createPlayer('away', 'striker', W/2, H * 0.52); aStr._slot = 'striker';
     players.push(aGk);
     players.push(aLdef);
     players.push(aRdef);
+    players.push(aLmid);
+    players.push(aRmid);
     players.push(aStr);
   }
 
@@ -669,8 +677,8 @@
     ];
     // Fixed player order: home gk, ldef, rdef, striker, then away same
     const order = [
-      ['home', 'gk'], ['home', 'ldef'], ['home', 'rdef'], ['home', 'striker'],
-      ['away', 'gk'], ['away', 'ldef'], ['away', 'rdef'], ['away', 'striker'],
+      ['home', 'gk'], ['home', 'ldef'], ['home', 'rdef'], ['home', 'lmid'], ['home', 'rmid'], ['home', 'striker'],
+      ['away', 'gk'], ['away', 'ldef'], ['away', 'rdef'], ['away', 'lmid'], ['away', 'rmid'], ['away', 'striker'],
     ];
     for (const [team, slot] of order) {
       const p = players.find(pp => pp.team === team && pp._slot === slot);
@@ -685,7 +693,7 @@
       '# flick-soccer telemetry v1',
       '# fields: S=snapshot E=event frame=frameCount',
       '# snapshot: frame,state,bx,by,bz,bvx,bvy,possessor,p0x,p0y,p0vx,p0vy,...',
-      '# players in order: h_gk,h_ldef,h_rdef,h_striker,a_gk,a_ldef,a_rdef,a_striker',
+      '# players in order: h_gk,h_ldef,h_rdef,h_lmid,h_rmid,h_striker,a_gk,a_ldef,a_rdef,a_lmid,a_rmid,a_striker',
       '# event: frame,type,actor,target,note',
     ];
     // Interleave snapshots and events by frame (stable order: snap then evt at same frame)
@@ -1457,14 +1465,18 @@
 
       const ballSpeed = Math.hypot(ball.vx, ball.vy);
       const ballMovingTowardOurGoal = isHomeTeam ? ball.vy > 0 : ball.vy < 0;
-      const isShotThreat = ballSpeed > 3 && ballMovingTowardOurGoal;
+      // Shot threat: genuine shot (speed >6) AND ball close to the goal
+      // (within 300px). Stops the keeper running out for any old pass
+      // that happens to drift goalward from midfield.
+      const ballDistToGoal = Math.abs(ball.y - goalLineY);
+      const isShotThreat = ballSpeed > 6 && ballMovingTowardOurGoal && ballDistToGoal < 300;
 
       let carrierThreat = false;
       if (ball.possessedBy && ball.possessedBy.team !== p.team) {
         const carrierDistToGoal = isHomeTeam
           ? (H - ball.possessedBy.y)
           : ball.possessedBy.y;
-        carrierThreat = carrierDistToGoal < 200;
+        carrierThreat = carrierDistToGoal < 150;
       }
 
       if (isShotThreat || carrierThreat) {
@@ -1550,6 +1562,29 @@
           tx = W/2 + Math.sin(performance.now() / 600 + p.homeX) * 70;
           const targetGoalY = isHomeTeam ? goalTopY + GOAL_DEPTH + 30 : goalBotY - 30;
           ty = targetGoalY;
+        } else if (p.role === 'mid') {
+          // Midfielder off-ball support run — closer to the ball than
+          // the striker (runAhead ~60-100px instead of 140-240), wider
+          // lanes so they don't crowd the striker. Gives the team a
+          // middle band in the 2-2-1 instead of 4 runners sprinting
+          // past the ball.
+          const phase = (performance.now() / 1000 + p.homeX * 0.003) % 6;
+          let laneOffset = laneSide * 110;
+          let midAhead = 80;
+          if (phase < 3) {
+            // HOLD central — offer a short outlet behind the striker
+            laneOffset = laneSide * 80;
+            midAhead = 60;
+          } else {
+            // UNDERLAP WIDE — drift wide to stretch the defense
+            laneOffset = laneSide * 150;
+            midAhead = 100;
+          }
+          tx = W/2 + laneOffset + Math.sin(performance.now() / 1300 + p.homeX) * 18;
+          ty = smoothedBall.y + forward * midAhead;
+          // Don't push past the top-of-box — mids aren't second strikers
+          const midCap = isHomeTeam ? 160 : H - 160;
+          ty = isHomeTeam ? Math.max(midCap, ty) : Math.min(midCap, ty);
         } else {
           // Striker run patterns on a slow cycle (~8s), per-player phase
           const phase = (performance.now() / 1000 + p.homeX * 0.003) % 8;
