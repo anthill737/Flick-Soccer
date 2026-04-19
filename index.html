@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.12</div>
+  <div id="version-tag">v3.6.13</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -570,36 +570,33 @@
 
   function setupPlayers() {
     players = [];
-    // HOME (red, attacks up) — 2-2-1 formation:
-    //   keeper, 2 defenders (deep), 2 mids (middle band), 1 striker.
+    // HOME (red, attacks up) — 5 players in a 2-1-1 shape:
+    // keeper at back, 2 defenders, 1 central midfielder, 1 striker.
+    // All players start in home's own half at kickoff.
     const hGk = createPlayer('home', 'keeper', W/2, H - 40); hGk._slot = 'gk';
     players.push(hGk);
-    const ldef = createPlayer('home', 'defender', W/2 - 110, H * 0.78); ldef._slot = 'ldef';
-    const rdef = createPlayer('home', 'defender', W/2 + 110, H * 0.78); rdef._slot = 'rdef';
-    const lmid = createPlayer('home', 'mid', W/2 - 90, H * 0.62); lmid._slot = 'lmid';
-    const rmid = createPlayer('home', 'mid', W/2 + 90, H * 0.62); rmid._slot = 'rmid';
-    const user = createPlayer('home', 'striker', W/2, H * 0.48);
+    const ldef = createPlayer('home', 'defender', W/2 - 110, H * 0.80); ldef._slot = 'ldef';
+    const rdef = createPlayer('home', 'defender', W/2 + 110, H * 0.80); rdef._slot = 'rdef';
+    const mid = createPlayer('home', 'mid', W/2, H * 0.68); mid._slot = 'mid';
+    const user = createPlayer('home', 'striker', W/2, H * 0.56);
     user.isUser = true;
     user._slot = 'striker';
     players.push(ldef);
     players.push(rdef);
-    players.push(lmid);
-    players.push(rmid);
+    players.push(mid);
     players.push(user);
     userPlayer = user;
 
-    // AWAY (blue, attacks down) — mirrored 2-2-1
+    // AWAY (blue, attacks down) — mirrored 2-1-1
     const aGk = createPlayer('away', 'keeper', W/2, 40); aGk._slot = 'gk';
-    const aLdef = createPlayer('away', 'defender', W/2 - 110, H * 0.22); aLdef._slot = 'ldef';
-    const aRdef = createPlayer('away', 'defender', W/2 + 110, H * 0.22); aRdef._slot = 'rdef';
-    const aLmid = createPlayer('away', 'mid', W/2 - 90, H * 0.38); aLmid._slot = 'lmid';
-    const aRmid = createPlayer('away', 'mid', W/2 + 90, H * 0.38); aRmid._slot = 'rmid';
-    const aStr = createPlayer('away', 'striker', W/2, H * 0.52); aStr._slot = 'striker';
+    const aLdef = createPlayer('away', 'defender', W/2 - 110, H * 0.20); aLdef._slot = 'ldef';
+    const aRdef = createPlayer('away', 'defender', W/2 + 110, H * 0.20); aRdef._slot = 'rdef';
+    const aMid = createPlayer('away', 'mid', W/2, H * 0.32); aMid._slot = 'mid';
+    const aStr = createPlayer('away', 'striker', W/2, H * 0.44); aStr._slot = 'striker';
     players.push(aGk);
     players.push(aLdef);
     players.push(aRdef);
-    players.push(aLmid);
-    players.push(aRmid);
+    players.push(aMid);
     players.push(aStr);
   }
 
@@ -677,8 +674,8 @@
     ];
     // Fixed player order: home gk, ldef, rdef, striker, then away same
     const order = [
-      ['home', 'gk'], ['home', 'ldef'], ['home', 'rdef'], ['home', 'lmid'], ['home', 'rmid'], ['home', 'striker'],
-      ['away', 'gk'], ['away', 'ldef'], ['away', 'rdef'], ['away', 'lmid'], ['away', 'rmid'], ['away', 'striker'],
+      ['home', 'gk'], ['home', 'ldef'], ['home', 'rdef'], ['home', 'mid'], ['home', 'striker'],
+      ['away', 'gk'], ['away', 'ldef'], ['away', 'rdef'], ['away', 'mid'], ['away', 'striker'],
     ];
     for (const [team, slot] of order) {
       const p = players.find(pp => pp.team === team && pp._slot === slot);
@@ -693,7 +690,7 @@
       '# flick-soccer telemetry v1',
       '# fields: S=snapshot E=event frame=frameCount',
       '# snapshot: frame,state,bx,by,bz,bvx,bvy,possessor,p0x,p0y,p0vx,p0vy,...',
-      '# players in order: h_gk,h_ldef,h_rdef,h_lmid,h_rmid,h_striker,a_gk,a_ldef,a_rdef,a_lmid,a_rmid,a_striker',
+      '# players in order: h_gk,h_ldef,h_rdef,h_mid,h_striker,a_gk,a_ldef,a_rdef,a_mid,a_striker',
       '# event: frame,type,actor,target,note',
     ];
     // Interleave snapshots and events by frame (stable order: snap then evt at same frame)
