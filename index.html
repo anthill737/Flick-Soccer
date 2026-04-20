@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.16</div>
+  <div id="version-tag">v3.6.17</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -488,10 +488,11 @@
   // pinball around the field. More drag = ball decelerates faster.
   // v3.6.15: bumped shot power to make non-lob driven shots feel
   // properly weighted (was underpowered vs AI shots which run 7.5-9.4).
-  const MAX_BALL_PX_PER_FRAME = 10.5;
-  const MIN_SHOT_SPEED = 1.42;
-  const POWER_SCALE = 0.0045;
-  const POWER_BASELINE = 2.5;
+  // v3.6.17: additional 30% bump across shot constants per user feedback.
+  const MAX_BALL_PX_PER_FRAME = 13.65;
+  const MIN_SHOT_SPEED = 1.85;
+  const POWER_SCALE = 0.00585;
+  const POWER_BASELINE = 3.25;
   const LINEAR_DRAG = 0.012;
   const QUAD_DRAG = 0.005;
 
