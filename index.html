@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.15</div>
+  <div id="version-tag">v3.6.16</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -514,7 +514,7 @@
 
   // Formation-shift — non-chasers compress toward their own goal when
   // defending deep, push up when the ball is in the opposing half.
-  const FORMATION_SHIFT_MAX = 180;      // max px a non-chaser drifts from homeY toward the ball
+  const FORMATION_SHIFT_MAX = 120;      // max px a non-chaser drifts from homeY toward the ball (v3.6.16: 180→120 to reduce cluster depth)
   const FORMATION_SHIFT_SMOOTHING = 0.04; // lerp rate (per frame) of each player's _formationShift toward target
 
   // Teammate repulsion — position-correction pass so same-team
@@ -1140,12 +1140,12 @@
 
     if (lobMode) {
       // Lob gets its own beefier power curve and a floor so even a soft
-      // flick lofts the ball a respectable distance. Horizontal mult > 1
-      // so lobs can outrun on-the-ground shot range; vertical slightly
-      // boosted for hang time.
-      const lobBase = Math.max(power, 4.2);
-      const hPower = lobBase * 1.28;
-      const vPower = lobBase * 1.12;
+      // flick lofts the ball a respectable distance. v3.6.16: capped
+      // lobBase at 6.0 and lowered vPower so lobs don't peak too high
+      // to score under the crossbar after the v3.6.15 shot-power bump.
+      const lobBase = Math.min(Math.max(power, 4.2), 6.0);
+      const hPower = lobBase * 1.15;
+      const vPower = lobBase * 0.75;
       ball.vx = dirX * hPower;
       ball.vy = dirY * hPower;
       ball.vz = vPower;
@@ -1723,7 +1723,7 @@
           if (p._formationShift === undefined) p._formationShift = desiredShift;
           p._formationShift += (desiredShift - p._formationShift) * FORMATION_SHIFT_SMOOTHING;
 
-          tx = p.homeX + (smoothedBall.x - p.homeX) * 0.25;
+          tx = p.homeX + (smoothedBall.x - p.homeX) * 0.15;
           let shiftedY = p.homeY + p._formationShift;
           if (isHomeTeam) shiftedY = Math.max(H/2 - 40, shiftedY);
           else            shiftedY = Math.min(H/2 + 40, shiftedY);
