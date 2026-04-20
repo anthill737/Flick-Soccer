@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.17</div>
+  <div id="version-tag">v3.6.18</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1141,10 +1141,12 @@
 
     if (lobMode) {
       // Lob gets its own beefier power curve and a floor so even a soft
-      // flick lofts the ball a respectable distance. v3.6.16: capped
-      // lobBase at 6.0 and lowered vPower so lobs don't peak too high
-      // to score under the crossbar after the v3.6.15 shot-power bump.
-      const lobBase = Math.min(Math.max(power, 4.2), 6.0);
+      // flick lofts the ball a respectable distance. v3.6.16 capped
+      // lobBase at 6.0 to tame loft after the v3.6.15 shot-power bump.
+      // v3.6.18: raised lobBase cap 6.0 → 9.0 for +50% range on hard
+      // lob flicks. The 0.75 vPower multiplier keeps the arc flat
+      // enough to score under the crossbar.
+      const lobBase = Math.min(Math.max(power, 4.2), 9.0);
       const hPower = lobBase * 1.15;
       const vPower = lobBase * 0.75;
       ball.vx = dirX * hPower;
