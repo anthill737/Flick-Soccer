@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.18</div>
+  <div id="version-tag">v3.6.19</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1037,7 +1037,9 @@
     }
     const swingSpeed = swingDist / dt;
     // Moderate power, capped well under shot maximum
-    const power = Math.min(5.2, 1.6 + swingSpeed * 0.0025);
+    // v3.6.19: +30% pass speed per user feedback (cap 5.2 → 6.76,
+    // baseline 1.6 → 2.08, scale 0.0025 → 0.00325).
+    const power = Math.min(6.76, 2.08 + swingSpeed * 0.00325);
     if (power < 1.4) return;
 
     ball.possessedBy = null;
@@ -1144,9 +1146,10 @@
       // flick lofts the ball a respectable distance. v3.6.16 capped
       // lobBase at 6.0 to tame loft after the v3.6.15 shot-power bump.
       // v3.6.18: raised lobBase cap 6.0 → 9.0 for +50% range on hard
-      // lob flicks. The 0.75 vPower multiplier keeps the arc flat
-      // enough to score under the crossbar.
-      const lobBase = Math.min(Math.max(power, 4.2), 9.0);
+      // lob flicks. v3.6.19: -20% per user feedback (9.0 → 7.2).
+      // The 0.75 vPower multiplier keeps the arc flat enough to score
+      // under the crossbar.
+      const lobBase = Math.min(Math.max(power, 4.2), 7.2);
       const hPower = lobBase * 1.15;
       const vPower = lobBase * 0.75;
       ball.vx = dirX * hPower;
