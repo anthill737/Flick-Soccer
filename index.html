@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.19</div>
+  <div id="version-tag">v3.6.20</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1157,6 +1157,7 @@
       ball.vz = vPower;
       ball.z = 0;
       ball.spin = spin * 0.5;
+      ball._isLob = true;
     } else {
       ball.vx = dirX * power;
       ball.vy = dirY * power;
@@ -1165,6 +1166,7 @@
       ball.vz = power * 0.10;
       ball.z = 0;
       ball.spin = spin;
+      ball._isLob = false;
     }
 
     flickResolved = false;
@@ -2375,9 +2377,12 @@
       if (ball.z <= 0) {
         ball.z = 0;
         ball.vz = -ball.vz * 0.35;
-        // First-bounce grass damping — lose significant horizontal energy
-        ball.vx *= 0.72;
-        ball.vy *= 0.72;
+        // First-bounce grass damping — lose significant horizontal energy.
+        // v3.6.20: lobs retain ~20% more horizontal velocity at bounce
+        // (multiplier 0.72 → 0.86) so they roll out further after landing.
+        const bounceDamp = ball._isLob ? 0.86 : 0.72;
+        ball.vx *= bounceDamp;
+        ball.vy *= bounceDamp;
         if (Math.abs(ball.vz) < 0.4) ball.vz = 0;
       }
     }
