@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.20</div>
+  <div id="version-tag">v3.6.21</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1512,6 +1512,13 @@
       // can drive to shooting range instead of ambling the whole field.
       const ballInOppHalfPre = isHomeTeam ? (smoothedBall.y < H * 0.5) : (smoothedBall.y > H * 0.5);
       if (p === ball.possessedBy && ourPossession && ballInOppHalfPre) engageBall = true;
+      // v3.6.21: sprint up-field during keeper distribution. Teammates
+      // have a big distance to cover (~350px from defensive slot to
+      // downfield distribution target) and at walking speed can't get
+      // there before the 1.5s keeper hold window expires.
+      if (ourPossession && ballCarrier && ballCarrier.role === 'keeper' && p !== ballCarrier) {
+        engageBall = true;
+      }
       p._engaging = engageBall;
 
       if (ourPossession) {
@@ -2007,7 +2014,9 @@
     // get open. After the hold window, distribute at the keeper rate.
     // Emergency punt at 5s (above) is the last-resort exit if no one opens.
     if (p.role === 'keeper') {
-      passProb = p._possessionTime > 150 ? 0.35 : 0;
+      // v3.6.21: hold threshold 150 → 90 frames (2.5s → 1.5s) so the
+      // keeper distributes sooner once teammates are sprinting upfield.
+      passProb = p._possessionTime > 90 ? 0.35 : 0;
     }
     // Carrier in their own defensive third plays safely — backpasses and
     // crosses are valid options, keeper is a legal outlet.
@@ -2149,7 +2158,7 @@
         // Keeper distribution: only needs the receiver to be reasonably free.
         let minOpen = (p._recentlyGained && p._recentlyGained > 0) ? 50 : 75;
         if (carrierInOwnThird) minOpen = 45;
-        if (p.role === 'keeper') minOpen = 40;
+        if (p.role === 'keeper') minOpen = 25; // v3.6.21: 40 → 25 so keeper passes sooner when teammates have reasonable space
         // Loosen openness requirement as we've held the ball longer
         minOpen = Math.max(20, minOpen - p._possessionTime * 0.35);
         if (!laneBlocked && targetOpen >= minOpen) {
