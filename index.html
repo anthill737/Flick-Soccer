@@ -388,7 +388,7 @@
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
   <div id="countdown"></div>
-  <div id="version-tag">v3.6.21</div>
+  <div id="version-tag">v3.6.22</div>
 </div>
 <div id="intro"></div>
 <div id="endscreen"></div>
@@ -1647,6 +1647,20 @@
           // Loose ball — lead by velocity so we meet it where it's going
           tx = ball.x + ball.vx * 4;
           ty = ball.y + ball.vy * 4;
+        } else if (ballCarrier.role === 'keeper') {
+          // v3.6.22: keepers are tackle-immune, so standing on top of
+          // them is pointless loitering. Approach to ~70px and hold
+          // pressing distance — enough to cut passing lanes without
+          // the visual "chaser is hugging the keeper" look.
+          const kdx = ball.x - p.x, kdy = ball.y - p.y;
+          const kd = Math.hypot(kdx, kdy);
+          if (kd > 70) {
+            tx = ball.x - (kdx / kd) * 70;
+            ty = ball.y - (kdy / kd) * 70;
+          } else {
+            tx = p.x;
+            ty = p.y;
+          }
         } else {
           // Opponent has ball — press goal-side to cut the angle,
           // but commit straight at a static carrier so they can't
@@ -2060,10 +2074,11 @@
       let bestMate = null, bestScore = -Infinity;
       for (const mate of players) {
         if (mate === p || mate.team !== p.team) continue;
-        // Keeper only becomes a legal outlet when carrier is in own third
-        if (mate.role === 'keeper' && !carrierInOwnThird) continue;
-        // Kickoff lock — never backpass to keeper right after kickoff
-        if (mate.role === 'keeper' && inKickoffLock) continue;
+        // v3.6.22: Keeper is NEVER a pass target in normal AI play.
+        // Prevents the "pressured → backpass to keeper → keeper kicks
+        // → intercepted → repeat" cycle. Keeper only receives via
+        // deflections, loose-ball pickups, and emergency punts.
+        if (mate.role === 'keeper') continue;
 
         const ahead = isHomeTeam ? (p.y - mate.y) : (mate.y - p.y);
         const lateralDist = Math.abs(mate.x - p.x);
