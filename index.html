@@ -146,6 +146,37 @@
     position: absolute;
     inset: -22px;
   }
+  #dbgBtn {
+    position: fixed;
+    right: 4px;
+    bottom: calc(22% + 192px);  /* stacked 10px above #logBtn */
+    width: 54px;
+    height: 54px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(40,40,48,0.55);
+    color: #aaa;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border: 2px solid rgba(255,255,255,0.18);
+    pointer-events: auto;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #dbgBtn::before {
+    content: '';
+    position: absolute;
+    inset: -22px;
+  }
+  #dbgBtn.on {
+    background: #4ecd6a;
+    color: #0a2a12;
+    border-color: #4ecd6a;
+    box-shadow: 0 0 16px rgba(78,205,106,0.7);
+  }
   /* Countdown overlay */
   #countdown {
     position: fixed;
@@ -387,6 +418,7 @@
   <button id="lobToggle">LOB</button>
   <button id="tackleBtn">TACKLE</button>
   <button id="logBtn">LOG</button>
+  <button id="dbgBtn">DBG</button>
   <div id="countdown"></div>
   <div id="version-tag">v3.6.22</div>
 </div>
@@ -479,9 +511,11 @@
   const PLAYER_DECEL = 0.22;
 
   const STAMINA_MAX = 100;
-  const STAMINA_DRAIN = 0.32;
-  const STAMINA_REGEN = 0.35;
-  const STAMINA_MIN_TO_SPRINT = 8;
+  // Legacy — retained only because a few callsites still reference these
+  // names. Real tuning lives in the STAGGER+STAMINA block further down.
+  const STAMINA_DRAIN = 0.32;           // unused — see STAMINA_SPRINT_DRAIN
+  const STAMINA_REGEN = 0.35;           // unused — see STAMINA_IDLE_REGEN
+  const STAMINA_MIN_TO_SPRINT = 10;     // bootstrap floor to start sprinting (aligned with STAMINA_LOW_HARD)
 
   // Ball — grounded: lower peak speed, moderate drag, spin decays fast
   // Ball — realistic weight; hard shots travel meaningfully but don't
@@ -531,18 +565,54 @@
   const KEEPER_RELEASE = 80;            // ball may be this far outside the box before keeper leaves it
 
   // Tackle miss — whiffed tackles when the carrier dodges sideways
-  const TACKLE_MISS_COOLDOWN = 50;      // frames of no-tackle after a whiff
-  const TACKLE_MISS_SLUGGISH = 30;      // frames of slow recovery on the whiffer
+  // (recovering behavior now handled by STAGGER_* below)
+  const TACKLE_MISS_COOLDOWN = 50;      // legacy — no longer read (kept for reference)
+  const TACKLE_MISS_SLUGGISH = 30;      // legacy — no longer read
 
   // Slide tackle — user-only deliberate steal action
   const SLIDE_DURATION = 22;            // ~0.37s of committed forward slide
   const SLIDE_SPEED_MULT = 1.4;         // multiplier on sprint max speed during slide
-  const SLIDE_STAMINA_COST = 25;        // stamina paid on activation
+  const SLIDE_STAMINA_COST = 25;        // stamina paid on activation (slide is a committed action, separate from per-contact tackle cost)
   const SLIDE_STAMINA_MIN = 15;         // can't slide below this stamina
   const SLIDE_CONTACT_BONUS = 8;        // extra px reach beyond r+r
-  const SLIDE_HIT_COOLDOWN = 20;        // ~0.33s cooldown after a successful slide
-  const SLIDE_MISS_COOLDOWN = 60;       // ~1s punishment cooldown on a whiff
-  const SLIDE_MISS_SLUGGISH = 45;       // slow-recovery frames on a whiff
+  // Slide outcomes now route through the stagger state machine (STAGGER_* below).
+
+  // ============================================================
+  // STAGGER + STAMINA SYSTEM — tunable block
+  // ============================================================
+  // State machine: normal -> tackling/recovering (tackler) OR downed -> getting_up -> normal (victim).
+  // Durations in frames (60fps). Tweak these to change game feel.
+
+  // --- Victim states ---
+  const STAGGER_DOWNED_CLEAN  = 45;     // frames on the ground after a clean tackle (~0.75s)
+  const STAGGER_GETUP_CLEAN   = 60;     // frames of slow get-up after clean-tackle downed
+  const STAGGER_GETUP_CLEAN_SPEED = 0.60; // speed multiplier during clean-tackle getting_up
+
+  const STAGGER_DOWNED_FUMBLE = 30;     // frames on the ground after a fumble tackle
+  const STAGGER_GETUP_FUMBLE  = 45;     // frames of slow get-up after fumble-tackle downed
+  const STAGGER_GETUP_FUMBLE_SPEED = 0.70; // speed multiplier during fumble-tackle getting_up
+
+  // --- Tackler states ---
+  const STAGGER_TACKLER_CLEAN  = 20;    // frames of recovering for a clean-hit tackler
+  const STAGGER_TACKLER_CLEAN_SPEED  = 0.80;
+  const STAGGER_TACKLER_FUMBLE = 75;    // frames of recovering for a fumble-hit tackler
+  const STAGGER_TACKLER_FUMBLE_SPEED = 0.70;
+  const STAGGER_TACKLER_MISS   = 90;    // frames of recovering for a whiffed tackle
+  const STAGGER_TACKLER_MISS_SPEED   = 0.60;
+
+  // --- Tackle initiation ---
+  const TACKLE_COOLDOWN_FRAMES = 90;    // can't initiate another tackle for this many frames (regardless of state)
+  const TACKLE_STAMINA_COST = 8;        // stamina paid on any tackle attempt (flat)
+
+  // --- Stamina pool ---
+  const STAMINA_SPRINT_DRAIN = 0.40;    // per frame while sprinting
+  const STAMINA_JOG_DRAIN    = 0.05;    // per frame while moving but not sprinting
+  const STAMINA_IDLE_REGEN   = 0.30;    // per frame while walking / idle
+  const STAMINA_LOW_MID      = 30;      // below this, speed capped to LOW_MID_SPEED_CAP
+  const STAMINA_LOW_MID_CAP  = 0.75;
+  const STAMINA_LOW_HARD     = 10;      // below this, speed capped to LOW_HARD_SPEED_CAP AND cannot sprint
+  const STAMINA_LOW_HARD_CAP = 0.60;
+  const STAMINA_POST_TACKLE_SPRINT_LOCK = 30; // frames sprint is disabled after a tackle attempt
 
   // ============================================================
   // GAME STATE — 4v4 (3 outfield + keeper each)
@@ -566,9 +636,130 @@
       isSprinting: false,
       isUser: false,
       stunned: 0,
+      // Stagger state machine. One of: 'normal'|'tackling'|'recovering'|'downed'|'getting_up'.
+      // _stateTimer counts down frames remaining in the current state.
+      // _getupSpeed is the max-speed multiplier applied while in getting_up.
+      // _postTackleSprintLock prevents sprint for a short window after any tackle attempt.
+      state: 'normal',
+      _stateTimer: 0,
+      _getupSpeed: 1,
+      _postTackleSprintLock: 0,
       homeX: x, homeY: y, // rest position for AI
       targetX: x, targetY: y,
     };
+  }
+
+  // Transition helper — logs to telemetry and resets the state timer.
+  // Pass `getupSpeed` only when entering 'getting_up'.
+  function setPlayerState(p, newState, timer, getupSpeed) {
+    if (p.state === newState) return;
+    const prev = p.state;
+    p.state = newState;
+    p._stateTimer = timer || 0;
+    p._getupSpeed = (getupSpeed !== undefined) ? getupSpeed : 1;
+    logEvent('state_change', p, null, prev + '->' + newState);
+  }
+
+  // True when the player is staggered and unavailable for aggressive AI duties
+  // (chaser, offensive runs). Stays true through the whole recovery chain.
+  function isStaggered(p) {
+    return p.state === 'downed' || p.state === 'getting_up'
+        || p.state === 'recovering' || p.state === 'tackling';
+  }
+
+  // May this player initiate a new tackle this frame?
+  function canInitiateTackle(p) {
+    if (p.state === 'downed' || p.state === 'getting_up'
+        || p.state === 'recovering' || p.state === 'tackling') return false;
+    if ((p._tackleCooldown || 0) > 0) return false;
+    if (p.stamina < TACKLE_STAMINA_COST) return false;
+    return true;
+  }
+
+  // Stagger victim entry — clean vs fumble vs slide knock determines
+  // downed duration and the follow-on getting_up parameters. If the
+  // victim had the ball, they drop it immediately. Keepers are exempt.
+  function staggerVictim(p, kind /* 'clean' | 'fumble' */) {
+    if (p.role === 'keeper') return; // keepers never hit the turf from field play
+    if (ball.possessedBy === p) {
+      ball.possessedBy = null;
+      flickResolved = true;
+    }
+    if (kind === 'fumble') {
+      p._nextGetup = { timer: STAGGER_GETUP_FUMBLE, speed: STAGGER_GETUP_FUMBLE_SPEED };
+      setPlayerState(p, 'downed', STAGGER_DOWNED_FUMBLE);
+    } else {
+      p._nextGetup = { timer: STAGGER_GETUP_CLEAN, speed: STAGGER_GETUP_CLEAN_SPEED };
+      setPlayerState(p, 'downed', STAGGER_DOWNED_CLEAN);
+    }
+  }
+
+  // Tackler recovery entry — outcome determines duration and speed cap.
+  function staggerTackler(p, outcome /* 'clean' | 'fumble' | 'miss' */) {
+    let t, s;
+    if (outcome === 'fumble') { t = STAGGER_TACKLER_FUMBLE; s = STAGGER_TACKLER_FUMBLE_SPEED; }
+    else if (outcome === 'miss') { t = STAGGER_TACKLER_MISS; s = STAGGER_TACKLER_MISS_SPEED; }
+    else { t = STAGGER_TACKLER_CLEAN; s = STAGGER_TACKLER_CLEAN_SPEED; }
+    setPlayerState(p, 'recovering', t);
+    p._recoverSpeed = s;
+  }
+
+  // Once-per-step advance of every player's state timer. Drives transitions:
+  //   downed -> getting_up (consumes _nextGetup)
+  //   getting_up -> normal
+  //   recovering -> normal
+  //   tackling -> (nothing here — slide-tackle code explicitly transitions on slide end)
+  function tickPlayerStates() {
+    for (const p of players) {
+      if (p._postTackleSprintLock > 0) p._postTackleSprintLock--;
+      if (p.state === 'normal') continue;
+      if (p._stateTimer > 0) p._stateTimer--;
+      if (p._stateTimer > 0) continue;
+      if (p.state === 'downed') {
+        const g = p._nextGetup || { timer: STAGGER_GETUP_CLEAN, speed: STAGGER_GETUP_CLEAN_SPEED };
+        p._nextGetup = null;
+        setPlayerState(p, 'getting_up', g.timer, g.speed);
+      } else if (p.state === 'getting_up' || p.state === 'recovering') {
+        setPlayerState(p, 'normal', 0, 1);
+      }
+      // 'tackling' transitions are handled at the slide-end site.
+    }
+  }
+
+  // Max-speed multiplier from the current stagger state (non-stamina).
+  function staggerSpeedMult(p) {
+    if (p.state === 'downed') return 0;
+    if (p.state === 'getting_up') return p._getupSpeed || 1;
+    if (p.state === 'recovering') return p._recoverSpeed || 1;
+    return 1;
+  }
+
+  // Max-speed multiplier from stamina thresholds.
+  function staminaSpeedMult(p) {
+    if (p.stamina < STAMINA_LOW_HARD) return STAMINA_LOW_HARD_CAP;
+    if (p.stamina < STAMINA_LOW_MID)  return STAMINA_LOW_MID_CAP;
+    return 1;
+  }
+
+  // Update stamina for this frame. `moving` = any directional intent,
+  // `sprinting` = currently sprinting. Jog drain applies when moving
+  // but not sprinting; idle regen otherwise.
+  function updateStamina(p, moving, sprinting) {
+    if (sprinting) {
+      p.stamina = Math.max(0, p.stamina - STAMINA_SPRINT_DRAIN);
+    } else if (moving) {
+      p.stamina = Math.max(0, p.stamina - STAMINA_JOG_DRAIN);
+    } else {
+      p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_IDLE_REGEN);
+    }
+  }
+
+  // Called at every tackle-attempt site (hit, miss, fumble, slide activate).
+  // Applies the flat stamina cost, the tackle cooldown, and the sprint lock.
+  function payTackleAttempt(p) {
+    p.stamina = Math.max(0, p.stamina - TACKLE_STAMINA_COST);
+    p._tackleCooldown = TACKLE_COOLDOWN_FRAMES;
+    p._postTackleSprintLock = STAMINA_POST_TACKLE_SPRINT_LOCK;
   }
 
   function setupPlayers() {
@@ -795,17 +986,24 @@
   // if it finishes without contact.
   function attemptSlideTackle() {
     if (!userPlayer) return;
-    if ((userPlayer._tackleCooldown || 0) > 0) return;
+    if (!canInitiateTackle(userPlayer)) return;
     if (ball.possessedBy === userPlayer) return;
     if (userPlayer.stamina < SLIDE_STAMINA_MIN) return;
     if (kickoffLock) return;
     if (hitstopFrames > 0) return;
     if ((userPlayer._sliding || 0) > 0) return;
-    userPlayer.stamina -= SLIDE_STAMINA_COST;
+    // Slide pays its own (larger) committed cost AND the per-attempt
+    // cooldown + sprint-lock from payTackleAttempt. Stamina subtracts
+    // once — payTackleAttempt's 8 cost is already below SLIDE_STAMINA_COST
+    // so we just charge the larger slide cost directly.
+    userPlayer.stamina = Math.max(0, userPlayer.stamina - SLIDE_STAMINA_COST);
+    userPlayer._tackleCooldown = TACKLE_COOLDOWN_FRAMES;
+    userPlayer._postTackleSprintLock = STAMINA_POST_TACKLE_SPRINT_LOCK;
     userPlayer._sliding = SLIDE_DURATION;
     userPlayer._slideHit = false;
     userPlayer._slideDirX = Math.cos(userPlayer.facing);
     userPlayer._slideDirY = Math.sin(userPlayer.facing);
+    setPlayerState(userPlayer, 'tackling', SLIDE_DURATION);
   }
 
   if (tackleBtn) {
@@ -819,6 +1017,20 @@
     // handler synchronously — route through exportTelemetry which does so.
     logBtn.addEventListener('click', exportTelemetry);
     logBtn.addEventListener('touchstart', e => { e.preventDefault(); exportTelemetry(); }, { passive: false });
+  }
+
+  // Debug overlay — shows each player's state, stamina, and tackle
+  // cooldown. Toggleable via on-screen DBG button or backtick (`) key
+  // on desktop. Backtick chosen to avoid colliding with WASD controls.
+  let debugOverlay = false;
+  const dbgBtn = document.getElementById('dbgBtn');
+  function toggleDebug() {
+    debugOverlay = !debugOverlay;
+    if (dbgBtn) dbgBtn.classList.toggle('on', debugOverlay);
+  }
+  if (dbgBtn) {
+    dbgBtn.addEventListener('click', toggleDebug);
+    dbgBtn.addEventListener('touchstart', e => { e.preventDefault(); toggleDebug(); }, { passive: false });
   }
 
   // ============================================================
@@ -929,6 +1141,7 @@
     if (e.key === ' ') { e.preventDefault(); setLobMode(!lobMode); }
     if (e.key.toLowerCase() === 'f') { e.preventDefault(); attemptSlideTackle(); }
     if (e.key.toLowerCase() === 'l') { e.preventDefault(); exportTelemetry(); }
+    if (e.key === '`') { e.preventDefault(); toggleDebug(); }
     if (['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault();
   });
   window.addEventListener('keyup', e => {
@@ -1211,7 +1424,8 @@
       for (const opp of players) {
         if (opp === userPlayer) continue;
         if (opp.team === userPlayer.team) continue;
-        if (opp.stunned > 0) continue;
+        // Don't double-hit an opponent already on the turf
+        if (opp.state === 'downed') continue;
         const dx = opp.x - userPlayer.x, dy = opp.y - userPlayer.y;
         const d = Math.hypot(dx, dy);
         const reach = userPlayer.r + opp.r + SLIDE_CONTACT_BONUS;
@@ -1231,22 +1445,24 @@
             ball.y = userPlayer.y + userPlayer._slideDirY * DRIBBLE_OFFSET;
             ball.vx = 0; ball.vy = 0; ball.vz = 0; ball.z = 0;
             ball.spin *= 0.4;
-            opp.stunned = 28;
-            opp._sluggish = 40;
             opp.vx = nx * 3.6; opp.vy = ny * 3.6;
+            // Slide-steal treated as a clean tackle victim-side.
+            staggerVictim(opp, 'clean');
             userPlayer._tackleImmune = 45;
             stats.home.tackles++;
             logEvent('slide', userPlayer, opp, 'hit');
             flashText('SLIDE STEAL', '#ff9f40');
-            // End slide early on successful steal — user exits into
-            // normal possession control next frame
+            // End slide early on successful steal. Exit straight to
+            // normal possession control — slide is a committed action
+            // and we want the reward to feel immediate.
             userPlayer._sliding = 0;
+            setPlayerState(userPlayer, 'normal', 0, 1);
             break;
           } else {
-            // Knock opponent (no ball to take)
-            opp.stunned = 22;
-            opp._sluggish = 30;
+            // Knock opponent (no ball to take) — treat as a fumble-grade
+            // knockdown so they eat a shorter downed + faster getup.
             opp.vx = nx * 3.0; opp.vy = ny * 3.0;
+            staggerVictim(opp, 'fumble');
             // Keep sliding — user can still hit another opponent
             // during the remaining frames
           }
@@ -1254,12 +1470,13 @@
       }
       clampPlayerToField(userPlayer);
       // Resolve end of slide (natural expiry OR steal-forced exit)
-      if (userPlayer._sliding <= 0) {
+      if (userPlayer._sliding <= 0 && userPlayer.state === 'tackling') {
         if (userPlayer._slideHit) {
-          userPlayer._tackleCooldown = SLIDE_HIT_COOLDOWN;
+          // Contacted something — shorter recovery (clean-tackler grade).
+          staggerTackler(userPlayer, 'clean');
         } else {
-          userPlayer._tackleCooldown = SLIDE_MISS_COOLDOWN;
-          userPlayer._sluggish = SLIDE_MISS_SLUGGISH;
+          // Whiffed the slide — long miss recovery.
+          staggerTackler(userPlayer, 'miss');
           flashText('MISS', '#888');
           logEvent('slide', userPlayer, null, 'miss');
         }
@@ -1294,7 +1511,18 @@
 
     const moving = (inX !== 0 || inY !== 0);
 
-    const wantsSprint = sprintInput && moving && userPlayer.stamina > 0;
+    // While downed the user has no control — velocity still drags out
+    // via the integrator below so the tackle bump still reads.
+    if (userPlayer.state === 'downed') {
+      inX = 0; inY = 0; sprintInput = false;
+    }
+    const movingEffective = (inX !== 0 || inY !== 0);
+
+    // Sprint gating: stamina floors + post-tackle lock + hard-cap
+    // (<STAMINA_LOW_HARD = no sprint).
+    let wantsSprint = sprintInput && movingEffective && userPlayer.stamina > 0;
+    if (userPlayer._postTackleSprintLock > 0) wantsSprint = false;
+    if (userPlayer.stamina < STAMINA_LOW_HARD) wantsSprint = false;
     if (wantsSprint && !userPlayer.isSprinting && userPlayer.stamina < STAMINA_MIN_TO_SPRINT) {
       userPlayer.isSprinting = false;
     } else if (wantsSprint) {
@@ -1303,19 +1531,20 @@
       userPlayer.isSprinting = false;
     }
 
-    // Sluggish state: just got tackled — player stutter-steps for a bit
-    if (userPlayer._sluggish && userPlayer._sluggish > 0) userPlayer._sluggish--;
-    const sluggishMult = (userPlayer._sluggish && userPlayer._sluggish > 0) ? 0.55 : 1.0;
-    const maxSpeed = (userPlayer.isSprinting ? PLAYER_SPRINT_MAX : PLAYER_WALK_MAX) * sluggishMult;
+    // Compose max-speed. stagger state (downed/getting_up/recovering)
+    // and stamina each impose a multiplicative cap.
+    const staggerMult = staggerSpeedMult(userPlayer);
+    const staminaMult = staminaSpeedMult(userPlayer);
+    const maxSpeed = (userPlayer.isSprinting ? PLAYER_SPRINT_MAX : PLAYER_WALK_MAX) * staggerMult * staminaMult;
 
     let tvx = 0, tvy = 0;
-    if (moving) {
+    if (movingEffective) {
       const m = Math.hypot(inX, inY);
       tvx = (inX / m) * maxSpeed;
       tvy = (inY / m) * maxSpeed;
     }
 
-    const accelRate = moving ? PLAYER_ACCEL : PLAYER_DECEL;
+    const accelRate = movingEffective ? PLAYER_ACCEL : PLAYER_DECEL;
     userPlayer.vx += (tvx - userPlayer.vx) * accelRate;
     userPlayer.vy += (tvy - userPlayer.vy) * accelRate;
 
@@ -1323,7 +1552,7 @@
     userPlayer.y += userPlayer.vy;
 
     const vmag = Math.hypot(userPlayer.vx, userPlayer.vy);
-    if (vmag > 0.3) {
+    if (vmag > 0.3 && userPlayer.state !== 'downed') {
       const targetFacing = Math.atan2(userPlayer.vy, userPlayer.vx);
       let delta = targetFacing - userPlayer.facing;
       while (delta > Math.PI) delta -= 2 * Math.PI;
@@ -1331,11 +1560,7 @@
       userPlayer.facing += delta * 0.25;
     }
 
-    if (userPlayer.isSprinting) {
-      userPlayer.stamina = Math.max(0, userPlayer.stamina - STAMINA_DRAIN);
-    } else {
-      userPlayer.stamina = Math.min(STAMINA_MAX, userPlayer.stamina + STAMINA_REGEN);
-    }
+    updateStamina(userPlayer, movingEffective, userPlayer.isSprinting);
 
     clampPlayerToField(userPlayer);
   }
@@ -1358,10 +1583,14 @@
   // converge on the ball every time positions shifted a few pixels.
   function updateChasers() {
     for (const team of ['home', 'away']) {
+      // Staggered players (downed / getting_up / recovering / tackling)
+      // are ineligible for chaser. If the natural nearest is staggered,
+      // fall through to the next eligible teammate. If none is eligible,
+      // leave the chaser slot empty — the ball stays loose, creating
+      // natural scramble moments.
       const outfielders = players.filter(p =>
-        p.team === team && p.role !== 'keeper'
+        p.team === team && p.role !== 'keeper' && !isStaggered(p)
       );
-      if (outfielders.length === 0) continue;
 
       let bestP = null, bestD = Infinity;
       for (const p of outfielders) {
@@ -1372,12 +1601,22 @@
       const state = chaserState[team];
       const current = state.playerRef;
 
-      // No current chaser, or current is no longer a valid outfielder → assign best
-      if (!current || !outfielders.includes(current)) {
-        state.playerRef = bestP;
-        state.lockedAt = frameCount;
+      // If the current chaser became staggered (or no longer outfields),
+      // reassign immediately — hysteresis doesn't protect a player who
+      // can't actually chase.
+      const currentEligible = current && outfielders.includes(current);
+      if (!currentEligible) {
+        if (state.playerRef !== bestP) {
+          const prev = state.playerRef;
+          state.playerRef = bestP;
+          state.lockedAt = frameCount;
+          if (bestP) logEvent('chaser_swap', bestP, prev, team);
+        }
         continue;
       }
+
+      // No best-challenger (everyone eligible is... the current chaser alone).
+      if (!bestP) continue;
 
       // Still minimum-hold? Keep current.
       const heldFrames = frameCount - state.lockedAt;
@@ -1408,10 +1647,10 @@
     const n = players.length;
     for (let i = 0; i < n; i++) {
       const a = players[i];
-      if (a.isUser || a.stunned > 0 || a.role === 'keeper') continue;
+      if (a.isUser || a.stunned > 0 || a.state === 'downed' || a.role === 'keeper') continue;
       for (let j = i + 1; j < n; j++) {
         const b = players[j];
-        if (b.isUser || b.stunned > 0 || b.role === 'keeper') continue;
+        if (b.isUser || b.stunned > 0 || b.state === 'downed' || b.role === 'keeper') continue;
         if (a.team !== b.team) continue;
         const dx = a.x - b.x;
         const dy = a.y - b.y;
@@ -1440,10 +1679,10 @@
     if (p._kickCooldown && p._kickCooldown > 0) p._kickCooldown--;
 
     if (p.isUser) return;
-    if (p.stunned > 0) {
-      // Still apply velocity/drag while stunned so a tackle bump actually
-      // pushes them out of contact — but don't run any AI logic
-      p.stunned--;
+    // Downed OR legacy ball-deflect stun — no AI logic, but velocity
+    // still integrates so the tackle bump pushes them out of contact.
+    if (p.state === 'downed' || p.stunned > 0) {
+      if (p.stunned > 0) p.stunned--;
       p.x += p.vx;
       p.y += p.vy;
       p.vx *= 0.86;
@@ -1504,7 +1743,27 @@
 
       // ONE chaser per team (resolved in updateChasers with hysteresis).
       // Non-chasers hold formation instead of converging on the ball.
+      // Staggered players are filtered out of the chaser pool by
+      // updateChasers, so isChaser is always false for them.
       const isChaser = chaserState[p.team].playerRef === p;
+
+      // Staggered players (recovering / getting_up / tackling) drop all
+      // aggressive AI duties: no chase, no offensive runs, no press.
+      // They drift back to their formation slot at a slow pace until
+      // they recover. `downed` is handled upstream by the early-return.
+      if (isStaggered(p)) {
+        p._engaging = false;
+        tx = p.homeX;
+        ty = p.homeY;
+        if (p.role === 'defender') {
+          const dDbg = Math.round(Math.hypot(tx - p.x, ty - p.y));
+          const vy10 = Math.round(p.vy * 10);
+          logEvent('aiTarget', p, null,
+            'formation|staggered|tx=' + Math.round(tx) + '|ty=' + Math.round(ty)
+            + '|d=' + dDbg + '|vy=' + vy10);
+        }
+        // fall through to separation + movement below
+      } else {
 
       let engageBall = false;
       if (!ourPossession && isChaser) engageBall = true;
@@ -1772,6 +2031,7 @@
           branch + '|tx=' + Math.round(tx) + '|ty=' + Math.round(ty)
           + '|d=' + dDbg + '|vy=' + vy10);
       }
+      } // end: non-staggered branch
     }
 
     // Separation — avoid clumping with same-team players. Opposing
@@ -1824,10 +2084,12 @@
       // defender approaches — fast to commit, controlled at the tackle.
       const distToTarget = Math.hypot(tx - p.x, ty - p.y);
       const wantSprint = distToTarget > 95;
-      if (wantSprint && !p._sprintingAI && p.stamina > STAMINA_MIN_TO_SPRINT) {
+      // Sprint gated by stamina floor + post-tackle lock.
+      const sprintAllowed = p.stamina >= STAMINA_LOW_HARD && p._postTackleSprintLock <= 0;
+      if (wantSprint && !p._sprintingAI && p.stamina > STAMINA_MIN_TO_SPRINT && sprintAllowed) {
         p._sprintingAI = true;
       }
-      if (p._sprintingAI && (p.stamina <= 0 || !wantSprint)) {
+      if (p._sprintingAI && (!sprintAllowed || !wantSprint)) {
         p._sprintingAI = false;
       }
       if (p._sprintingAI) {
@@ -1840,19 +2102,18 @@
       p._sprintingAI = false;
     }
 
-    if (p._sprintingAI) {
-      p.stamina = Math.max(0, p.stamina - STAMINA_DRAIN);
-      p.isSprinting = true; // so the visual trail draws
-    } else {
-      p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN);
-      p.isSprinting = false;
-    }
+    // Stamina — jog drain when moving non-sprint, sprint drain when sprinting,
+    // idle regen when at rest. `moving` is approximated from target distance.
+    const aiMoving = rawD > 4 || p._sprintingAI;
+    updateStamina(p, aiMoving, p._sprintingAI);
+    p.isSprinting = !!p._sprintingAI; // drives the visual sprint trail
 
-    // Sluggish state after being tackled — reduced top speed for a beat
-    if (p._sluggish && p._sluggish > 0) {
-      p._sluggish--;
-      speedLimit *= 0.55;
-    }
+    // Stagger + stamina speed caps. Stagger recovery (recovering / getting_up)
+    // applies a fraction of PLAYER_WALK_MAX as the hard ceiling; stamina
+    // thresholds apply on top multiplicatively.
+    const staggerMult = staggerSpeedMult(p);
+    const staminaMult = staminaSpeedMult(p);
+    speedLimit *= staggerMult * staminaMult;
 
     // Dead zone — don't jitter around the target. Tight when chasing ball,
     // wide when holding a position so players visibly "stand" in their zone.
@@ -2237,8 +2498,7 @@
     for (const p of players) {
       if (p === carrier) continue;
       if (p.team === carrier.team) continue; // only opposing players tackle
-      if (p.stunned > 0) continue;
-      if (p._tackleCooldown && p._tackleCooldown > 0) continue;
+      if (!canInitiateTackle(p)) continue;
 
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
@@ -2246,7 +2506,7 @@
       const contactDist = p.r + carrier.r + 9;
 
       if (d < contactDist) {
-        // TACKLE — transfer possession, shove old carrier clear, stun
+        // TACKLE — transfer possession, shove old carrier clear, stagger
         const bumpX = d > 0.01 ? -dx / d : 0;
         const bumpY = d > 0.01 ? -dy / d : 0;
 
@@ -2262,12 +2522,12 @@
           const carDirY = carrier.vy / carrierSpeed;
           const dot = approachX * carDirX + approachY * carDirY;
           if (Math.abs(dot) < 0.25) {
-            // Whiff — tackler keeps momentum past the carrier, pays a
-            // long cooldown + brief sluggish, carrier keeps the ball.
+            // Whiff — tackler keeps momentum past the carrier; they eat
+            // the miss recovery + the flat tackle cooldown/stamina cost.
             p.vx += approachX * 0.6;
             p.vy += approachY * 0.6;
-            p._tackleCooldown = TACKLE_MISS_COOLDOWN;
-            p._sluggish = TACKLE_MISS_SLUGGISH;
+            payTackleAttempt(p);
+            staggerTackler(p, 'miss');
             if (p.isUser || carrier.isUser) {
               flashText(p.isUser ? 'MISSED!' : 'DODGED', '#aaa');
             }
@@ -2283,11 +2543,9 @@
         carrier.y += bumpY * shoveDist;
         clampPlayerToField(carrier);
 
-        // Residual velocity so the bump reads as a push, plus stun
+        // Residual velocity so the bump reads as a push
         carrier.vx = bumpX * 3.6;
         carrier.vy = bumpY * 3.6;
-        carrier.stunned = 28;
-        carrier._sluggish = 40; // after stun ends, move at reduced speed for 40 more frames
 
         // Small forward nudge on the tackler for weight
         p.vx += -bumpX * 0.8;
@@ -2296,6 +2554,9 @@
         // Possession transfer OR fumble — 25% of tackles produce a
         // loose ball for either side to chase, like a real 50/50.
         const fumble = Math.random() < 0.25;
+        // Pay the tackle cost before routing outcome — cooldown covers
+        // clean/fumble alike (spec: 90 frames regardless).
+        payTackleAttempt(p);
         if (fumble) {
           ball.possessedBy = null;
           // Pop the ball perpendicular to the tackle direction with
@@ -2307,9 +2568,7 @@
           ball.vz = 1.8;
           ball.spin = (Math.random() - 0.5) * 0.3;
           flickResolved = true;
-          // Both players briefly can't tackle — scramble
-          p._tackleCooldown = 30;
-          carrier._tackleCooldown = 30;
+          staggerTackler(p, 'fumble');
         } else {
           ball.possessedBy = p;
           ball.x = p.x + Math.cos(p.facing) * DRIBBLE_OFFSET;
@@ -2318,8 +2577,12 @@
           ball.spin *= 0.4; // keep a bit of spin rather than zeroing
           p._tackleImmune = 40;
           p._kickCooldown = 0;
-          p._tackleCooldown = 70;
+          staggerTackler(p, 'clean');
         }
+        // Victim goes down — staggerVictim also drops the ball if they
+        // still hold it (noop here since we already flipped possession
+        // above, but keeps the invariant explicit).
+        staggerVictim(carrier, fumble ? 'fumble' : 'clean');
         // "Hot potato" — after winning the ball, this player is biased
         // toward passing quickly instead of dribbling into more pressure
         p._recentlyGained = 90;
@@ -2642,14 +2905,31 @@
     ball.trail = [];
     flickResolved = true;
 
-    // Reset players to formation
+    // Reset players to formation. Stagger state is wiped (goal / dead ball
+    // is a clean slate); stamina is intentionally PRESERVED so matches don't
+    // reset fatigue on every restart — fatigue is a match-long resource.
     for (const p of players) {
       p.x = p.homeX;
       p.y = p.homeY;
       p.vx = 0; p.vy = 0;
       p.stunned = 0;
+      // Reset stagger + tackle timers so nobody stays frozen into the
+      // next possession. Uses direct field assignment instead of
+      // setPlayerState so we don't flood telemetry with resets.
+      p.state = 'normal';
+      p._stateTimer = 0;
+      p._getupSpeed = 1;
+      p._recoverSpeed = 1;
+      p._postTackleSprintLock = 0;
+      p._tackleCooldown = 0;
+      p._tackleImmune = 0;
+      p._sliding = 0;
+      p._sprintingAI = false;
+      p.isSprinting = false;
     }
-    userPlayer.stamina = STAMINA_MAX;
+    // Stamina PRESERVED intentionally — spec: "reset all stagger states but
+    // preserve stamina". (Match start uses setupPlayers which already
+    // initializes stamina to STAMINA_MAX.)
 
     // Possession alternates: team that conceded kicks off. Possession
     // goes to the STRIKER of that team, regardless of whether the user
@@ -3353,6 +3633,7 @@
     for (const p of players) {
       if (p.kickAnimT < p.kickAnimDur) p.kickAnimT++;
     }
+    tickPlayerStates();
     updateChasers();
     updateUserPlayer();
     for (const p of players) updateAI(p);
@@ -3502,6 +3783,73 @@
     drawFlash();
     drawBanner();
     drawTouchControls();
+    if (debugOverlay) drawDebugOverlay();
+  }
+
+  // Debug overlay — per-player state/stamina/cooldown pill above each
+  // player, plus a constants summary in the corner. Toggle via DBG button
+  // or backtick key.
+  function drawDebugOverlay() {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    for (const p of players) {
+      const label = p.state;
+      const stamInt = Math.round(p.stamina);
+      const cd = p._tackleCooldown || 0;
+      const lock = p._postTackleSprintLock || 0;
+      // Line 1: state + timer (e.g. "recovering 34")
+      const stateLine = p.state === 'normal'
+        ? 'normal'
+        : label + ' ' + (p._stateTimer | 0);
+      // Line 2: st=NN cd=NN lk=NN
+      const metrics = 'st=' + stamInt
+        + (cd > 0 ? ' cd=' + cd : '')
+        + (lock > 0 ? ' lk=' + lock : '');
+
+      // Background pill above the player's head
+      const lineY = p.y - p.r - 6;
+      ctx.font = 'bold 9px monospace';
+      const w = Math.max(
+        ctx.measureText(stateLine).width,
+        ctx.measureText(metrics).width
+      ) + 8;
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(p.x - w/2, lineY - 22, w, 22);
+
+      // Color-code by state — green normal, yellow recovering/getting_up,
+      // red downed/tackling. Stamina-only warn recolors to yellow if
+      // below mid threshold.
+      let color = '#9be39b';
+      if (p.state === 'downed' || p.state === 'tackling') color = '#ff6b6b';
+      else if (p.state === 'recovering' || p.state === 'getting_up') color = '#ffd84a';
+      else if (p.stamina < STAMINA_LOW_HARD) color = '#ff6b6b';
+      else if (p.stamina < STAMINA_LOW_MID)  color = '#ffd84a';
+      ctx.fillStyle = color;
+      ctx.fillText(stateLine, p.x, lineY - 12);
+      ctx.fillStyle = '#e5e5e5';
+      ctx.fillText(metrics, p.x, lineY - 2);
+    }
+
+    // Corner legend with the tuning constants for quick glances.
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    const lines = [
+      'DEBUG  ` or DBG to toggle',
+      'state: normal|tackling|recovering|downed|getting_up',
+      'stamina floors: ' + STAMINA_LOW_MID + '=>' + STAMINA_LOW_MID_CAP.toFixed(2)
+        + '  ' + STAMINA_LOW_HARD + '=>' + STAMINA_LOW_HARD_CAP.toFixed(2),
+      'tackle cd=' + TACKLE_COOLDOWN_FRAMES + 'f  sprintLock=' + STAMINA_POST_TACKLE_SPRINT_LOCK + 'f',
+    ];
+    const boxW = 280, boxH = 12 * lines.length + 10;
+    const bx = 8, by = H - boxH - 8;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(bx, by, boxW, boxH);
+    ctx.fillStyle = '#e5e5e5';
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], bx + 6, by + 14 + i * 12);
+    }
+    ctx.restore();
   }
 
   function drawBanner() {
