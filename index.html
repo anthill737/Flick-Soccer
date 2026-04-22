@@ -541,6 +541,18 @@
   const DRIBBLE_DAMPING = 0.72;
   const POSSESSION_RADIUS = 52;
 
+  // ============================================================
+  // HITBOX FORGIVENESS — arcadey "give" so you don't have to be
+  // right on top of an opponent or the ball. Tune these up for a
+  // looser/more-arcade feel, down for tighter/sim feel.
+  // ============================================================
+  // Added to (p.r + carrier.r) when checking body-tackle contact.
+  // Was 9; bumped for more forgiving steals.
+  const TACKLE_CONTACT_BONUS = 18;
+  // Added to (p.r + ball.r) when checking loose-ball pickup/deflect.
+  // Was 2; bumped so passes and loose balls are easier to collect.
+  const BALL_PICKUP_BONUS = 10;
+
   // Chaser hysteresis — prevents rank-swap flicker so only ONE
   // defender per team commits to the ball at a time.
   const CHASER_SWAP_MIN_GAP_PX = 28;    // challenger must be at least this many px closer
@@ -574,7 +586,7 @@
   const SLIDE_SPEED_MULT = 1.4;         // multiplier on sprint max speed during slide
   const SLIDE_STAMINA_COST = 25;        // stamina paid on activation (slide is a committed action, separate from per-contact tackle cost)
   const SLIDE_STAMINA_MIN = 15;         // can't slide below this stamina
-  const SLIDE_CONTACT_BONUS = 8;        // extra px reach beyond r+r
+  const SLIDE_CONTACT_BONUS = 18;       // extra px reach beyond r+r (bumped 8→18 for arcadey give)
   // Slide outcomes now route through the stagger state machine (STAGGER_* below).
 
   // ============================================================
@@ -2503,7 +2515,7 @@
       const dx = carrier.x - p.x;
       const dy = carrier.y - p.y;
       const d = Math.hypot(dx, dy);
-      const contactDist = p.r + carrier.r + 9;
+      const contactDist = p.r + carrier.r + TACKLE_CONTACT_BONUS;
 
       if (d < contactDist) {
         // TACKLE — transfer possession, shove old carrier clear, stagger
@@ -2814,7 +2826,7 @@
       // after a flick — especially if they were moving forward — and
       // deflect the ball off their own body.
       if (p === ball._lastKicker && (ball._kickCooldown || 0) > 0) continue;
-      if (ddist < p.r + ball.r + 2 && ball.z < 18) {
+      if (ddist < p.r + ball.r + BALL_PICKUP_BONUS && ball.z < 18) {
         if (p.role === 'keeper' && !flickResolved) {
           // Keeper catches — credit the shot as on-target to the shooting team
           if (ball._isShot && ball._lastKicker && ball._lastKicker.team !== p.team) {
